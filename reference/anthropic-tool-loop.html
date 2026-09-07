@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — The tool-use round trip (Anthropic Messages API)</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Reference · wire cheat sheet · verified 2026-09-07</p>
+<h1>The tool-use round trip</h1>
+<p class="subtitle">Everything that crosses the wire in one Claude tool call — the shapes, the stop reasons, and the three laws of the ledger. Print me.</p>
+
+<p>Built in <a href="../lessons/0002-agent-loop-live.html">Lesson 0002</a>. Companion references: the <a href="python-typescript-phrasebook.html">Python → TypeScript phrasebook</a>. Canonical source: <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview">Anthropic — Tool use with Claude</a>.</p>
+
+<h2><span class="secno">§1</span>The cycle</h2>
+<div class="code-block"><div class="code-title">one lap of the loop</div><pre><code>you ──── messages + tools ────▶ Claude
+you ◀─── stop_reason: "tool_use"
+         content: [ {type:"tool_use", id, name, input} ]        ← data, not execution
+you      run name(input), build {type:"tool_result", tool_use_id, content}
+you ──── assistant echo (verbatim) + user [tool_result] ────▶ Claude
+you ◀─── stop_reason: "end_turn" | "tool_use" | …               ← repeat until done</code></pre></div>
+<p>The model <strong>never executes anything</strong>. A <code>tool_use</code> block is JSON naming a function and its arguments; validating and dispatching it is your program's job (<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview">docs</a>). One response may carry <em>several</em> <code>tool_use</code> blocks — answer <em>all</em> of them in the same follow-up user message (<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use">parallel tool use</a>).</p>
+
+<h2><span class="secno">§2</span>The three laws of the ledger</h2>
+<ol>
+  <li><strong>Append-only.</strong> The conversation is a ledger you grow, never edit — every hop appends.</li>
+  <li><strong>Echo verbatim.</strong> The assistant turn (its <code>content</code> array, including <code>tool_use</code> blocks) goes back into the next request <em>unchanged</em>.</li>
+  <li><strong>Every call answered.</strong> Each <code>tool_use</code> gets a <code>tool_result</code> (matching <code>tool_use_id</code>) in the <em>immediately following</em> user message. Break this and the API rejects the request — verified live: <code>API 400: … Each tool_use block must have a corresponding tool_result block in the next message.</code></li>
+</ol>
+
+<h2><span class="secno">§3</span><code>stop_reason</code> — the loop's control signal</h2>
+<table class="ref-table">
+  <tr><th>value</th><th>meaning</th><th>your move</th></tr>
+  <tr><td><code>"tool_use"</code></td><td>model stopped to call your tool(s)</td><td>execute, append <code>tool_result</code>, call again</td></tr>
+  <tr><td><code>"end_turn"</code></td><td>model finished its answer</td><td>read the text blocks; loop exits</td></tr>
+  <tr><td><code>"max_tokens"</code></td><td>output hit the <code>max_tokens</code> cap, mid-thought</td><td>continue (ask it to go on) or raise the cap</td></tr>
+  <tr><td><code>"stop_sequence"</code></td><td>output hit a stop sequence you set</td><td>application-specific handling</td></tr>
+</table>
+<p>Other values exist (e.g. refusals, server-tool pauses) — see <a href="https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons">handling stop reasons</a>. In a hand-rolled loop, treat <em>unknown</em> values like <code>"end_turn"</code>: stop, don't crash.</p>
+
+<h2><span class="secno">§4</span>Wire shapes (minimal)</h2>
+<div class="code-block"><div class="code-title">request — declare a tool (JSON Schema, not TypeScript)</div><pre><code>{
+  <span class="tok-str">"model"</span>: <span class="tok-str">"claude-sonnet-4-5"</span>,
+  <span class="tok-str">"max_tokens"</span>: <span class="tok-str">1024</span>,
+  <span class="tok-str">"tools"</span>: [{
+    <span class="tok-str">"name"</span>: <span class="tok-str">"lookup_guide_entry"</span>,
+    <span class="tok-str">"description"</span>: <span class="tok-str">"Look up a Guide entry…"</span>,      <span class="tok-com">// ← a prompt; the model reads it to decide</span>
+    <span class="tok-str">"input_schema"</span>: { <span class="tok-str">"type"</span>: <span class="tok-str">"object"</span>, <span class="tok-str">"properties"</span>: { … }, <span class="tok-str">"required"</span>: […] }
+  }],
+  <span class="tok-str">"messages"</span>: [ …the ledger… ]
+}</code></pre></div>
+<div class="code-block"><div class="code-title">response — a tool call arrives as data</div><pre><code>{
+  <span class="tok-str">"stop_reason"</span>: <span class="tok-str">"tool_use"</span>,
+  <span class="tok-str">"content"</span>: [
+    { <span class="tok-str">"type"</span>: <span class="tok-str">"text"</span>, <span class="tok-str">"text"</span>: <span class="tok-str">"Let me check the Guide…"</span> },
+    { <span class="tok-str">"type"</span>: <span class="tok-str">"tool_use"</span>, <span class="tok-str">"id"</span>: <span class="tok-str">"toolu_01A…"</span>,
+      <span class="tok-str">"name"</span>: <span class="tok-str">"lookup_guide_entry"</span>, <span class="tok-str">"input"</span>: { <span class="tok-str">"topic"</span>: <span class="tok-str">"towel"</span> } }
+  ]
+}</code></pre></div>
+<div class="code-block"><div class="code-title">what you append next — two messages, then call again</div><pre><code>{ <span class="tok-str">"role"</span>: <span class="tok-str">"assistant"</span>, <span class="tok-str">"content"</span>: <span class="tok-com">…echo response.content verbatim…</span> }
+{ <span class="tok-str">"role"</span>: <span class="tok-str">"user"</span>, <span class="tok-str">"content"</span>: [
+    { <span class="tok-str">"type"</span>: <span class="tok-str">"tool_result"</span>, <span class="tok-str">"tool_use_id"</span>: <span class="tok-str">"toolu_01A…"</span>, <span class="tok-str">"content"</span>: <span class="tok-str">"About the most massively useful thing…"</span> }
+] }</code></pre></div>
+
+<h2><span class="secno">§5</span>Errors are results, not exceptions</h2>
+<p>When a tool fails, don't throw past the loop — <em>return</em> the failure as the tool's result content (optionally <code>"is_error": true</code>) so the model can see it, self-correct, and try again. A thrown exception kills the whole run; an error result keeps the loop alive (<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls">handle tool calls</a>). The unknown-tool default arm in your dispatch switch is exactly this: <code>error: unknown tool "…"</code>.</p>
+
+<h2><span class="secno">§6</span>Circuit breakers</h2>
+<p>Every production loop ships with a hop cap and a token budget — the canonical pseudocode in Roitman 2026 ch. 19 §19.4 (<a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>) takes <code>max_steps</code> as a parameter, and Anthropic's <a href="https://www.anthropic.com/engineering/building-effective-agents">Building Effective Agents</a> lists action limits among the guardrails that separate an agent from a <code>while (true)</code>. A model stuck calling tools forever is a production incident with a meter running.</p>
+
+<div class="lesson-footer">
+  <p>Reference doc of the <em>Agents &amp; RAG in TypeScript</em> course · Built by <a href="../lessons/0002-agent-loop-live.html">Lesson 0002</a> · <a href="../reference/python-typescript-phrasebook.html">Phrasebook</a> · <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview">Canonical source</a></p>
+</div>
+
+</body>
+</html>

@@ -1,21 +1,11 @@
 {
   "name": "learn-ai-agents",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "typecheck": "tsc --noEmit"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/rafa761/learn-ai-agents.git"
-  },
-  "keywords": [],
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/rafa761/learn-ai-agents/issues"
-  },
-  "homepage": "https://github.com/rafa761/learn-ai-agents#readme",
   "devDependencies": {
     "@types/node": "^26.4.1",
     "tsx": "^4.23.13",
