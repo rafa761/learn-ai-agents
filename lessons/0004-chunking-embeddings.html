@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0004 — Chunk, embed, retrieve</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 0004 · ~45 minutes · RAG track · book ch. 16</p>
+<h1>Chunk, embed, retrieve</h1>
+<p class="subtitle">Three lessons ago you met the wire. Two lessons ago you ran the loop. Last lesson you taught the boundary to say no. Today the corpus grows real: you slice the book itself into chunks, turn each chunk into a vector on your own CPU, and watch a plain-English question retrieve the right passage by <em>meaning</em> — the R in RAG, running entirely on your machine.</p>
+
+<div class="callout win">
+  <p class="callout-title">Today's win</p>
+  <p>Two files. <code>chunker.ts</code> proves — with assertions, not vibes — that a word window with overlap loses nothing at a boundary. <code>retrieve.ts</code> embeds those chunks with a real model (local, free, no key), embeds your question, and ranks by the cosine you also wrote by hand. Then you ask it <em>why must chunks overlap</em> and it hands you back the right paragraph of the book.</p>
+</div>
+
+<h2><span class="secno">§1</span>Why the corpus must be sliced at all</h2>
+<p>Your agent loop from lessons 0002–0003 has a finite context and a model that <a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">treats context as the finite resource it is</a>. Meanwhile the knowledge you need lives in a 636-page book. The book names the wall precisely (<a href="https://arxiv.org/abs/2606.24937">Roitman 2026, §16.1</a>): models <strong>hallucinate</strong> past their knowledge boundary, their knowledge is <strong>stale</strong> past the training cutoff, and they are <strong>generic</strong> where your domain is specific. RAG answers all three the same way: stop asking the weights, start <em>retrieving</em> the document.</p>
+<p>But you cannot embed a whole book into one vector — the embedding model has a context window, and a single vector for 636 pages would be a summary so lossy it's meaningless. So the offline pipeline is: <strong>load → chunk → embed → store</strong> (book fig. 16.1). Today you build the middle two steps, and the ranking step, against four real paragraphs of the chunking chapter itself. Yes — the book, teaching you to chunk the book.</p>
+
+<h2><span class="secno">§2</span>The two ideas, before any code</h2>
+<p><strong>Chunking (book §16.4).</strong> Every chunk must be (1) small enough for the embedding model's window, (2) semantically coherent, (3) useful when retrieved <em>in isolation</em> — the LLM will see it cold, without its neighbours. The simplest strategy that respects this: a window of <code>W</code> units stepping forward by <code>W − O</code>, where <code>O</code> is the <strong>overlap</strong> — consecutive chunks share their last <code>O</code> units, so a sentence cut at one chunk's edge appears whole in the next. The count is exact (book eq. 16.19):</p>
+<div class="code-block"><div class="code-title">the overlap formula</div><pre><code>N_chunks = ceil((L − O) / (W − O))     L = document length, W = window, O = overlap</code></pre></div>
+<p><strong>Embeddings (book §16.2.3, §16.9.1).</strong> An embedding model maps text to a <strong>dense vector whose direction encodes meaning</strong> — MiniLM gives you 384 dimensions; OpenAI's <code>text-embedding-3-large</code> gives 3072. To rank chunks against a query you embed both with the <em>same model</em> (vectors from different models do not compare) and take the <strong>cosine</strong> — the angle between vectors, magnitudes cancelled (book eq. 16.3):</p>
+<div class="code-block"><div class="code-title">the ranking formula</div><pre><code>sim(q, e) = (q · e) / (‖q‖ · ‖e‖)      identical direction → 1 · orthogonal → 0 · opposite → −1</code></pre></div>
+<p>Real texts land in ≈ 0.0–0.6; nothing in practice embeds to an "opposite." One consequence worth internalizing now: <strong>normalize your vectors and cosine collapses to a plain dot product</strong> — you'll see it happen in the lab. And per the book (§16.9.1), the embedding model is <em>the single most impactful component choice in a RAG system</em> — it sets the quality ceiling for everything downstream. Tactical depth if you want it: <a href="https://www.pinecone.io/learn/chunking-strategies/">Pinecone — Chunking Strategies</a> · <a href="https://platform.openai.com/docs/guides/embeddings">OpenAI — vector embeddings guide</a>. Keep the <a href="../reference/chunking-embeddings.html">chunking &amp; embeddings cheat sheet</a> open while you code.</p>
+
+<h2><span class="secno">§3</span>The lab — slice, prove, embed, retrieve</h2>
+
+<div class="task">
+<p class="task-title">Setup — one dependency, already true on this machine</p>
+<div class="code-block"><div class="code-title">shell — from the repository root</div><pre><code>pnpm add @huggingface/transformers     <span class="tok-com"># transformers.js 4.2.0 — installed during lesson verification;</span>
+                                       <span class="tok-com"># the command is idempotent, it will simply say "already"</span>
+mkdir -p labs/0004-chunking-embeddings</code></pre></div>
+<p>Two facts about this dependency. First, its shipped type declarations don't pass <code>tsc</code> under <code>nodenext</code> resolution (their problem, not yours) — the root <code>tsconfig.json</code> now carries <code>"skipLibCheck": true</code>, the standard one-line answer: check <em>our</em> types strictly, trust the library's declarations to its own build. Second, the model (~25&nbsp;MB, <code>all-MiniLM-L6-v2</code>) is already downloaded into <code>node_modules/@huggingface/transformers/.cache</code> from verification — your first run is instant. On a fresh clone, the first run downloads it once, then everything is offline.</p>
+</div>
+
+<div class="task">
+<p class="task-title">Lab A — chunker.ts: the window, the overlap, the proof</p>
+<div class="code-block"><div class="code-title">labs/0004-chunking-embeddings/chunker.ts</div><pre><code><span class="tok-com">// Slice the book before you can search the book — chunking.</span>
+<span class="tok-com">// Translation of Roitman 2026, Listing 16.2 (LangChain's RecursiveCharacterTextSplitter)</span>
+<span class="tok-com">// into plain TypeScript: a word window that advances by (size - overlap), plus the</span>
+<span class="tok-com">// cosine-similarity function you will need to rank embeddings in part two.</span>
+<span class="tok-com">// Offline: no API, no key, no network — pure data-structure work.</span>
+
+<span class="tok-kw">import</span> assert <span class="tok-kw">from</span> <span class="tok-str">"node:assert/strict"</span>;
+
+<span class="tok-com">// ---------- 1. The corpus: real text from the book itself (ch. 16, lightly adapted) ----------</span>
+<span class="tok-com">// Four paragraphs, ~180 words — small enough to eyeball, real enough to matter.</span>
+<span class="tok-com">// (The capstone RAGs over this entire book; today it RAGs over its chunking chapter.</span>
+<span class="tok-com">// There is a school of thought that says this is recursive. There is.)</span>
+<span class="tok-kw">const</span> EXCERPT = [
+  <span class="tok-str">"Retrieval-Augmented Generation equips large language models with a dynamic, updatable external memory, enabling accurate, grounded, and verifiable responses across knowledge-intensive tasks."</span>,
+  <span class="tok-str">"Large language models store knowledge parametrically, compressed into billions of weights during training. This creates three fundamental limitations: hallucination, where models confidently generate plausible but incorrect statements beyond their reliable knowledge boundary; knowledge staleness, because training data has a cutoff date; and domain specificity, since general-purpose models lack deep knowledge of proprietary codebases and documents."</span>,
+  <span class="tok-str">"Chunking is the process of splitting documents into segments that are small enough to fit in an embedding model's context window, semantically coherent, and containing enough context to be useful when retrieved in isolation."</span>,
+  <span class="tok-str">"The simplest strategy splits every W tokens with an overlap of O tokens between consecutive chunks. Overlap preserves context across boundaries: a sentence cut at a chunk edge still appears whole inside its neighbour chunk, so retrieval never loses a thought merely because a window ended mid-thought."</span>,
+].<span class="tok-fn">join</span>(<span class="tok-str">"\n\n"</span>);
+
+<span class="tok-com">// ---------- 2. Fixed-size chunking with overlap (the Listing 16.2 core) ----------</span>
+<span class="tok-com">// Book units are tokens; we chunk words — same mechanics, one honest simplification.</span>
+<span class="tok-com">// The book's overlap formula (16.19):  N_chunks = ceil((L - O) / (W - O)).</span>
+
+<span class="tok-kw">interface</span> <span class="tok-typ">Chunk</span> {
+  index: <span class="tok-typ">number</span>;
+  words: <span class="tok-typ">string</span>[];
+  text: <span class="tok-typ">string</span>;
+}
+
+<span class="tok-kw">export function</span> <span class="tok-fn">chunkWords</span>(text: <span class="tok-typ">string</span>, size: <span class="tok-typ">number</span>, overlap: <span class="tok-typ">number</span>): <span class="tok-typ">Chunk</span>[] {
+  <span class="tok-kw">if</span> (overlap &gt;= size) {
+    <span class="tok-com">// step = size - overlap <= 0 would never advance the window: infinite loop,</span>
+    <span class="tok-com">// caught here instead. LangChain raises for the same misconfiguration.</span>
+    <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`overlap (${overlap}) must be smaller than size (${size})`</span>);
+  }
+  <span class="tok-kw">const</span> words = text.<span class="tok-fn">split</span>(<span class="tok-str">/\s+/</span>).<span class="tok-fn">filter</span>(Boolean);
+  <span class="tok-kw">const</span> step = size - overlap;
+  <span class="tok-kw">const</span> chunks: <span class="tok-typ">Chunk</span>[] = [];
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> start = 0; start &lt; words.length; start += step) {
+    <span class="tok-kw">const</span> window = words.<span class="tok-fn">slice</span>(start, start + size);
+    <span class="tok-kw">if</span> (window.length === 0) <span class="tok-kw">break</span>;
+    chunks.<span class="tok-fn">push</span>({ index: chunks.length, words: window, text: window.<span class="tok-fn">join</span>(<span class="tok-str">" "</span>) });
+    <span class="tok-kw">if</span> (start + size &gt;= words.length) <span class="tok-kw">break</span>; <span class="tok-com">// this window already covered the tail</span>
+  }
+  <span class="tok-kw">return</span> chunks;
+}
+
+<span class="tok-com">// ---------- 3. Cosine similarity, by hand (book eq. 16.3) ----------</span>
+<span class="tok-com">// sim(q, e) = (q . e) / (|q| * |e|)  — the angle between vectors, magnitudes cancelled.</span>
+
+<span class="tok-kw">export function</span> <span class="tok-fn">cosine</span>(a: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;, b: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;): <span class="tok-typ">number</span> {
+  <span class="tok-kw">let</span> dot = 0;
+  <span class="tok-kw">let</span> normA = 0;
+  <span class="tok-kw">let</span> normB = 0;
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> i = 0; i &lt; a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  <span class="tok-kw">return</span> dot / (Math.<span class="tok-fn">sqrt</span>(normA) * Math.<span class="tok-fn">sqrt</span>(normB));
+}
+
+<span class="tok-com">// ---------- 4. Prove the machinery before trusting it ----------</span>
+
+<span class="tok-com">// 4a. Cosine on vectors you can check by hand.</span>
+assert.<span class="tok-fn">equal</span>(<span class="tok-fn">cosine</span>([1, 0, 0], [0, 1, 0]), 0); <span class="tok-com">// orthogonal -&gt; 0</span>
+assert.<span class="tok-fn">equal</span>(<span class="tok-fn">cosine</span>([2, 0, 0], [7, 0, 0]), 1); <span class="tok-com">// same direction, any magnitude -&gt; 1</span>
+assert.<span class="tok-fn">equal</span>(<span class="tok-fn">cosine</span>([1, 0, 0], [-1, 0, 0]), -1); <span class="tok-com">// opposite -&gt; -1</span>
+assert.<span class="tok-fn">equal</span>(<span class="tok-fn">cosine</span>([3, 4], [4, 3]), 24 / 25); <span class="tok-com">// 0.96: angle shrinks, not lengths</span>
+
+<span class="tok-com">// 4b. The chunker on a controlled document: L = 11 words, W = 4, O = 1.</span>
+<span class="tok-kw">const</span> tiny = <span class="tok-str">"one two three four five six seven eight nine ten eleven"</span>;
+<span class="tok-kw">const</span> tinyChunks = <span class="tok-fn">chunkWords</span>(tiny, 4, 1);
+<span class="tok-com">// Formula: ceil((11 - 1) / (4 - 1)) = ceil(3.33) = 4 — and the loop agrees:</span>
+assert.<span class="tok-fn">equal</span>(tinyChunks.length, Math.<span class="tok-fn">ceil</span>((11 - 1) / (4 - 1)));
+assert.<span class="tok-fn">equal</span>(tinyChunks.length, 4);
+assert.<span class="tok-fn">deepEqual</span>(tinyChunks[0].words, [<span class="tok-str">"one"</span>, <span class="tok-str">"two"</span>, <span class="tok-str">"three"</span>, <span class="tok-str">"four"</span>]);
+assert.<span class="tok-fn">deepEqual</span>(tinyChunks[1].words, [<span class="tok-str">"four"</span>, <span class="tok-str">"five"</span>, <span class="tok-str">"six"</span>, <span class="tok-str">"seven"</span>]); <span class="tok-com">// 'four' = the overlap</span>
+assert.<span class="tok-fn">deepEqual</span>(tinyChunks[3].words, [<span class="tok-str">"ten"</span>, <span class="tok-str">"eleven"</span>]); <span class="tok-com">// ragged tail: short final window</span>
+
+<span class="tok-com">// 4c. The invariant that makes overlap safe: each chunk begins with the previous</span>
+<span class="tok-com">// chunk's step-tail — no word sequence is ever lost at a boundary.</span>
+<span class="tok-kw">for</span> (<span class="tok-kw">let</span> i = 0; i + 1 &lt; tinyChunks.length; i++) {
+  <span class="tok-kw">const</span> expected = tinyChunks[i].words.<span class="tok-fn">slice</span>(4 - 1); <span class="tok-com">// last `step` words of chunk i</span>
+  assert.<span class="tok-fn">deepEqual</span>(tinyChunks[i + 1].words.<span class="tok-fn">slice</span>(0, expected.length), expected);
+}
+
+<span class="tok-com">// 4d. Misconfiguration fails loudly, not silently.</span>
+assert.<span class="tok-fn">throws</span>(() =&gt; <span class="tok-fn">chunkWords</span>(tiny, 50, 50), /overlap/);
+
+console.<span class="tok-fn">log</span>(<span class="tok-str">"all assertions green — cosine and chunker behave exactly as specified\n"</span>);
+
+<span class="tok-com">// ---------- 5. Chunk the real excerpt (factoid-QA sizing from Table 16.3, in words) ----------</span>
+<span class="tok-kw">const</span> SIZE = 60;
+<span class="tok-kw">const</span> OVERLAP = 12;
+<span class="tok-kw">const</span> chunks = <span class="tok-fn">chunkWords</span>(EXCERPT, SIZE, OVERLAP);
+<span class="tok-kw">const</span> wordCount = EXCERPT.<span class="tok-fn">split</span>(<span class="tok-str">/\s+/</span>).<span class="tok-fn">filter</span>(Boolean).length;
+
+console.<span class="tok-fn">log</span>(<span class="tok-str">`excerpt: ${wordCount} words -&gt; ${chunks.length} chunks (W=${SIZE}, O=${OVERLAP})`</span>);
+console.<span class="tok-fn">log</span>(<span class="tok-str">`formula check: ceil((${wordCount} - ${OVERLAP}) / (${SIZE} - ${OVERLAP})) = `</span> +
+  <span class="tok-str">`${Math.ceil((wordCount - OVERLAP) / (SIZE - OVERLAP))}\n`</span>);
+
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> c <span class="tok-kw">of</span> chunks) {
+  <span class="tok-kw">const</span> head = c.words.<span class="tok-fn">slice</span>(0, 6).<span class="tok-fn">join</span>(<span class="tok-str">" "</span>);
+  <span class="tok-kw">const</span> tail = c.words.<span class="tok-fn">slice</span>(-6).<span class="tok-fn">join</span>(<span class="tok-str">" "</span>);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`chunk ${c.index}: ${c.words.length} words | "${head} ... ${tail}"`</span>);
+}
+</code></pre></div>
+<div class="code-block"><div class="code-title">shell — run it</div><pre><code>pnpm exec tsx labs/0004-chunking-embeddings/chunker.ts</code></pre></div>
+<p><strong>Expected:</strong> assertions green, then <code>157 words -&gt; 4 chunks</code>, the formula agreeing with the loop, and four chunk summaries. Read the chunk boundaries — really read them. <em>Predict before running Lab B:</em> chunk 2 starts mid-paragraph-three and ends mid-paragraph-four. What will that straddling do to retrieval quality?</p>
+</div>
+
+<div class="task">
+<p class="task-title">Lab B — retrieve.ts: the E, and the R</p>
+<div class="code-block"><div class="code-title">labs/0004-chunking-embeddings/retrieve.ts</div><pre><code><span class="tok-com">// The E in RAG — and the R. The chunks from Lab A go through a real embedding</span>
+<span class="tok-com">// model running ON YOUR MACHINE (Xenova/all-MiniLM-L6-v2, 384 dims, ~25 MB,</span>
+<span class="tok-com">// CPU-only via transformers.js), and a plain-English query retrieves by meaning.</span>
+<span class="tok-com">// No API key, no request, no cost. The first-ever run downloads the model into</span>
+<span class="tok-com">// node_modules/@huggingface/transformers/.cache; every later run is offline.</span>
+
+<span class="tok-kw">import</span> { pipeline } <span class="tok-kw">from</span> <span class="tok-str">"@huggingface/transformers"</span>;
+
+<span class="tok-com">// ---------- corpus + chunker: same ones you proved correct in Lab A ----------</span>
+<span class="tok-com">// (Retyped compact. Deliberately: retrieval is remembering.)</span>
+
+<span class="tok-kw">const</span> EXCERPT = [
+  <span class="tok-str">"Retrieval-Augmented Generation equips large language models with a dynamic, updatable external memory, enabling accurate, grounded, and verifiable responses across knowledge-intensive tasks."</span>,
+  <span class="tok-str">"Large language models store knowledge parametrically, compressed into billions of weights during training. This creates three fundamental limitations: hallucination, where models confidently generate plausible but incorrect statements beyond their reliable knowledge boundary; knowledge staleness, because training data has a cutoff date; and domain specificity, since general-purpose models lack deep knowledge of proprietary codebases and documents."</span>,
+  <span class="tok-str">"Chunking is the process of splitting documents into segments that are small enough to fit in an embedding model's context window, semantically coherent, and containing enough context to be useful when retrieved in isolation."</span>,
+  <span class="tok-str">"The simplest strategy splits every W tokens with an overlap of O tokens between consecutive chunks. Overlap preserves context across boundaries: a sentence cut at a chunk edge still appears whole inside its neighbour chunk, so retrieval never loses a thought merely because a window ended mid-thought."</span>,
+].<span class="tok-fn">join</span>(<span class="tok-str">"\n\n"</span>);
+
+<span class="tok-kw">function</span> <span class="tok-fn">chunkTexts</span>(text: <span class="tok-typ">string</span>, size: <span class="tok-typ">number</span>, overlap: <span class="tok-typ">number</span>): <span class="tok-typ">string</span>[] {
+  <span class="tok-kw">if</span> (overlap &gt;= size) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`overlap (${overlap}) must be smaller than size (${size})`</span>);
+  <span class="tok-kw">const</span> words = text.<span class="tok-fn">split</span>(<span class="tok-str">/\s+/</span>).<span class="tok-fn">filter</span>(Boolean);
+  <span class="tok-kw">const</span> step = size - overlap;
+  <span class="tok-kw">const</span> out: <span class="tok-typ">string</span>[] = [];
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> start = 0; start &lt; words.length; start += step) {
+    <span class="tok-kw">const</span> window = words.<span class="tok-fn">slice</span>(start, start + size);
+    <span class="tok-kw">if</span> (window.length === 0) <span class="tok-kw">break</span>;
+    out.<span class="tok-fn">push</span>(window.<span class="tok-fn">join</span>(<span class="tok-str">" "</span>));
+    <span class="tok-kw">if</span> (start + size &gt;= words.length) <span class="tok-kw">break</span>;
+  }
+  <span class="tok-kw">return</span> out;
+}
+
+<span class="tok-com">// Book eq. 16.3, same function you tested in Lab A. Note what normalization does:</span>
+<span class="tok-com">// the pipeline below emits unit-length vectors, so |q| * |e| = 1 and cosine</span>
+<span class="tok-com">// reduces to a plain dot product. The formula stays honest either way.</span>
+<span class="tok-kw">function</span> <span class="tok-fn">cosine</span>(a: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;, b: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;): <span class="tok-typ">number</span> {
+  <span class="tok-kw">let</span> dot = 0;
+  <span class="tok-kw">let</span> normA = 0;
+  <span class="tok-kw">let</span> normB = 0;
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> i = 0; i &lt; a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  <span class="tok-kw">return</span> dot / (Math.<span class="tok-fn">sqrt</span>(normA) * Math.<span class="tok-fn">sqrt</span>(normB));
+}
+
+<span class="tok-com">// ---------- the embedding function: model + mean pooling + normalize ----------</span>
+
+<span class="tok-kw">const</span> embedder = <span class="tok-kw">await</span> <span class="tok-fn">pipeline</span>(<span class="tok-str">"feature-extraction"</span>, <span class="tok-str">"Xenova/all-MiniLM-L6-v2"</span>);
+
+<span class="tok-kw">async function</span> <span class="tok-fn">embed</span>(text: <span class="tok-typ">string</span>): <span class="tok-typ">Promise</span>&lt;<span class="tok-typ">Float32Array</span>&gt; {
+  <span class="tok-kw">const</span> tensor = <span class="tok-kw">await</span> <span class="tok-fn">embedder</span>(text, { pooling: <span class="tok-str">"mean"</span>, normalize: <span class="tok-str">true</span> });
+  <span class="tok-kw">return</span> tensor.data <span class="tok-kw">as</span> <span class="tok-typ">Float32Array</span>; <span class="tok-com">// [1, 384] flattened — one vector per text</span>
+}
+
+<span class="tok-com">// ---------- index once, then retrieve ----------</span>
+
+<span class="tok-kw">const</span> chunks = <span class="tok-fn">chunkTexts</span>(EXCERPT, 60, 12);
+console.<span class="tok-fn">log</span>(<span class="tok-str">`corpus: ${chunks.length} chunks, embedding...`</span>);
+<span class="tok-kw">const</span> chunkVectors = <span class="tok-kw">await</span> <span class="tok-typ">Promise</span>.<span class="tok-fn">all</span>(chunks.<span class="tok-fn">map</span>(embed));
+console.<span class="tok-fn">log</span>(<span class="tok-str">`indexed: ${chunkVectors.length} vectors of ${chunkVectors[0].length} dims\n`</span>);
+
+<span class="tok-kw">const</span> QUERIES = [
+  <span class="tok-str">"why must consecutive chunks share overlapping words"</span>,
+  <span class="tok-str">"why do language models hallucinate facts"</span>,
+  <span class="tok-str">"vogon poetry appreciation society"</span>, <span class="tok-com">// control: nothing like this is in the corpus</span>
+];
+
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> query <span class="tok-kw">of</span> QUERIES) {
+  <span class="tok-kw">const</span> queryVector = <span class="tok-kw">await</span> <span class="tok-fn">embed</span>(query);
+  <span class="tok-kw">const</span> ranked = chunks
+    .<span class="tok-fn">map</span>((text, i) =&gt; ({ text, score: <span class="tok-fn">cosine</span>(queryVector, chunkVectors[i]) }))
+    .<span class="tok-fn">sort</span>((x, y) =&gt; y.score - x.score);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`Q: ${query}`</span>);
+  <span class="tok-kw">for</span> (<span class="tok-kw">const</span> [rank, hit] <span class="tok-kw">of</span> ranked.<span class="tok-fn">slice</span>(0, 3).<span class="tok-fn">entries</span>()) {
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`  ${rank + 1}. [${hit.score.toFixed(3)}] ${hit.text.slice(0, 86)}...`</span>);
+  }
+  console.<span class="tok-fn">log</span>();
+}
+</code></pre></div>
+<div class="code-block"><div class="code-title">shell — run it</div><pre><code>pnpm exec tsx labs/0004-chunking-embeddings/retrieve.ts</code></pre></div>
+<p><strong>Expected:</strong> 4 vectors of 384 dims, then three ranked retrievals. The overlap question lands on the chunk carrying the overlap sentences (≈ 0.54 here); the hallucination question on the chunk carrying the three-limitations passage (≈ 0.49); and the Vogon control — retrieval practice inside the retrieval lesson — sits flat around 0.1, because <em>nothing in the corpus is about it</em>. That flat line matters: cosine scores are relative, and knowing what "no match" looks like is half of using them.</p>
+</div>
+
+<h2><span class="secno">§4</span>What you just built — and what it quietly taught you</h2>
+<p>Map it back to the pipeline: <code>EXCERPT → chunkTexts → embed → (in-memory vectors)</code> is the whole offline index; <code>embed(query) → cosine → sort → top-3</code> is the whole online retrieve. No store yet — four vectors don't need one — but every piece of the RAG retrieval layer now exists on your disk, typed by you.</p>
+<p>Now the straddle you predicted in Lab A: the top hit for the overlap query <em>begins mid-paragraph</em> ("window, semantically coherent…") because fixed-size windows don't know paragraphs exist. Retrieval still worked — overlap saved the boundary — but the prettiest chunk would have respected the paragraph break. That is a live demonstration of why book §16.4.3 (structure-aware chunking: split at headers, never mid-table) and §16.4.4 (parent-child: index small, return large) exist. You didn't read about the failure mode; you produced it, on your machine, with a paragraph the book wrote about itself.</p>
+<p>One design note for the road: <code>tensor.data as Float32Array</code> is the only cast in the lab — the pipeline's return type is a union over tensor dtypes, and we know <code>normalize: true</code> yields float32. It's the same shape of decision as lesson 0003's <code>unknown</code> boundary: the library can't know what you know; you assert it, in the smallest possible place.</p>
+
+<h2><span class="secno">§5</span>Check yourself</h2>
+<div class="quiz" data-quiz="lesson0004"></div>
+<script type="application/json" id="lesson0004">
+[
+  {
+    "q": "Overlap between consecutive chunks exists so that…",
+    "options": [
+      "a thought cut at a boundary survives intact",
+      "every single chunk reaches the model window maximum",
+      "the total corpus token count stays strictly limited",
+      "embedding models always charge less for repeated text"
+    ],
+    "answer": 0,
+    "explain": "Overlap is insurance for the third chunking criterion — usefulness in isolation. A sentence sliced at a window edge reappears whole in the neighbour chunk (you proved the step-tail invariant in 4c). It does not maximize window fill, shrink the corpus, or change what the model costs."
+  },
+  {
+    "q": "L = 1000 words, W = 200, O = 50. How many chunks?",
+    "options": ["6", "5", "7", "8"],
+    "answer": 2,
+    "explain": "Book eq. 16.19: ceil((L − O) / (W − O)) = ceil(950 / 150) = ceil(6.33) = 7. The ceiling carries the ragged final window — the last chunk is short, and that is correct, not waste."
+  },
+  {
+    "q": "An embedding of a text is, precisely…",
+    "options": [
+      "a dense vector whose direction encodes meaning",
+      "a sparse one-hot code over the vocabulary",
+      "the chunk's token identifiers, padded to maximum",
+      "a fixed-length cryptographic digest of the text"
+    ],
+    "answer": 0,
+    "explain": "Dense, learned, directional: similar meanings map to nearby directions, which is why cosine — an angle — ranks them (book §16.2.3). One-hot encodes identity, token ids encode sequence, a digest encodes exact bits: none of them make 'towel' and 'blanket' point the same way."
+  },
+  {
+    "q": "Cosine similarity between two embeddings measures…",
+    "options": [
+      "the angle between them, magnitudes ignored",
+      "the euclidean distance between their endpoints",
+      "how many tokens both texts share",
+      "the model's confidence when embedding text"
+    ],
+    "answer": 0,
+    "explain": "Book eq. 16.3 divides the dot product by both norms — lengths cancel, only direction survives. That's why a 3-word and a 300-word paraphrase can score 0.9. Lexical overlap (tokens shared) is what BM25 measures; cosine is the semantic counterpart."
+  },
+  {
+    "q": "A well-formed chunk must do all of these EXCEPT…",
+    "options": [
+      "respect the generator model's output token limit",
+      "fit inside the embedding model's context window",
+      "stay semantically coherent as a single unit",
+      "be useful when retrieved in complete isolation"
+    ],
+    "answer": 0,
+    "explain": "The three criteria (book §16.4) constrain the chunk against the EMBEDDING model and the reader — window fit, coherence, standalone utility. The generator's output limit constrains the answer, not the evidence; retrieved chunks ride IN the prompt, and their total is your context budget, a lesson-0005 concern."
+  }
+]
+</script>
+<script src="../assets/quiz.js"></script>
+
+<h2><span class="secno">§6</span>Primary sources, in order</h2>
+<ul>
+  <li><strong>First, from your book</strong> (Roitman 2026, <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>): ch. 16 §16.2 (pipeline), §16.4 (chunking — you implemented Listing 16.2 and produced §16.4.3's motivation live), §16.9.1 (model choice = quality ceiling). The chapter's remaining Python is now readable to you as a checklist of translations.</li>
+  <li><strong>Web primary — tactics:</strong> <a href="https://www.pinecone.io/learn/chunking-strategies/">Pinecone — Chunking Strategies</a>. Size, boundaries, overlap, when structure-aware beats fixed. Read it after the lab, not before — you now have the scars it explains.</li>
+  <li><strong>Web primary — embeddings:</strong> <a href="https://platform.openai.com/docs/guides/embeddings">OpenAI — vector embeddings guide</a>. Provider-neutral fundamentals; the request/response shape it shows is the same contract every embeddings API speaks (see the cheat sheet's §6 table).</li>
+  <li><strong>Keep open while coding:</strong> the <a href="../reference/chunking-embeddings.html">chunking &amp; embeddings cheat sheet</a> — formulas, strategy table, sizing table, wire shape. Full list: <code>RESOURCES.md</code>.</li>
+</ul>
+
+<div class="callout note">
+  <p class="callout-title">Your teacher is on call</p>
+  <p>A cosine that returns <code>NaN</code> (hint: zero vector?), a ranking that surprises you, the <code>skipLibCheck</code> decision, why the pipeline needs <code>pooling: "mean"</code> at all — <strong>ask in the chat</strong>. The straddle observation in §4 especially tends to reward a good argument.</p>
+</div>
+
+<h2><span class="secno">§7</span>Where this goes</h2>
+<p><strong>Lesson 0005 — the G arrives.</strong> Your retriever hands the model the right chunk; next you teach the model to <em>use</em> it: the grounded-answer prompt with <code>[Doc N]</code> citations (book §16.2.4 — you saw its Python today), zod guarding the retriever's output where it meets the loop, and the first honest vector store when in-memory cosine stops being enough. Your spaced homework also returns: a question you first met in lesson 0001 comes back in 0005's quiz, cold. After that, the capstone is assembly, not invention.</p>
+
+<div class="lesson-footer">
+  <p>Lesson 0004 of the <em>Agents &amp; RAG in TypeScript</em> course · <a href="../reference/chunking-embeddings.html">Chunking &amp; embeddings cheat sheet</a> · <a href="https://www.pinecone.io/learn/chunking-strategies/">Primary source</a> · Book ch. 16 · Next: <em>the G arrives</em></p>
+  <div class="lesson-nav">
+    <a class="pill" href="0003-trust-but-validate.html">prev: 0003 · trust, but validate</a>
+    <span class="pill">next: 0005 · grounded generation</span>
+  </div>
+</div>
+
+</body>
+</html>

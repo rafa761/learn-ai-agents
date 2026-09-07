@@ -80,6 +80,9 @@ Reading order for this course: Anthropic posts → Vercel AI SDK → Claude Agen
   Plain-language embeddings with code samples incl. TypeScript.
 - [LlamaIndex — Introduction to RAG](https://docs.llamaindex.ai/python/framework/understanding/rag/)
   Framework-level RAG pipeline walk; concepts transfer to TS. (Their TS port is secondary.)
+- [Transformers.js docs](https://huggingface.co/docs/transformers.js/en/index)
+  `@huggingface/transformers` — run embedding (and other) models locally in Node/TS. Verified live 2026-09-07 (v4.2.0, 200 OK). Lesson 0004's embedding engine; the capstone's retrieval layer. Requires `skipLibCheck` (shipped d.ts doesn't pass nodenext). Companion: our [chunking cheat sheet](reference/chunking-embeddings.html).
+- **Currency note (2026-09-07, live):** Z.AI's global API (`api.z.ai`) serves **no embeddings** — `GET /api/paas/v4/models` lists chat models only; `/embeddings` returns error 1211 for `embedding-2`/`embedding-3`. The China endpoint (`open.bigmodel.cn`) rejects the same key. Do not design lesson material around GLM embeddings; local transformers.js or Voyage/OpenAI are the real options.
 
 ## Wisdom (Communities)
 

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — chunking &amp; embeddings</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Reference · RAG ingestion cheat sheet · verified 2026-09-07 · @huggingface/transformers 4.2.0 · book ch. 16</p>
+<h1>Chunking &amp; embeddings</h1>
+<p class="subtitle">Everything between <em>a document exists</em> and <em>retrieval by meaning works</em>: the split, the overlap, the vector, the angle. Print me.</p>
+
+<p>Built in <a href="../lessons/0004-chunking-embeddings.html">Lesson 0004</a>. Companion references: the <a href="zod-boundary.html">zod boundary cheat sheet</a> (guards the retriever&rsquo;s output) and the <a href="python-typescript-phrasebook.html">phrasebook</a>. Book: Roitman 2026, ch. 16 (<a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>) — sections 16.2, 16.4, 16.9.1.</p>
+
+<h2><span class="secno">§1</span>The pipeline, end to end</h2>
+<div class="code-block"><div class="code-title">offline indexing once · online retrieval per query (book fig. 16.1)</div><pre><code>OFFLINE   document → load → <strong>chunk</strong> → <strong>embed</strong> → store (vectors + text + metadata)
+ONLINE    query → <strong>embed</strong> → top-k by cosine → inject as context → generate, with citations</code></pre></div>
+<p>Two formulas carry the whole lesson:</p>
+<div class="code-block"><div class="code-title">book eq. 16.19 — how many chunks · book eq. 16.3 — how to rank them</div><pre><code>N_chunks = ceil((L − O) / (W − O))        L = doc length, W = window, O = overlap
+sim(q, e) = (q · e) / (‖q‖ · ‖e‖)         cosine: the ANGLE, magnitudes cancelled</code></pre></div>
+
+<h2><span class="secno">§2</span>Chunking strategies (book §16.4)</h2>
+<table>
+  <tr><th>Strategy</th><th>Mechanism</th><th>Use when</th></tr>
+  <tr><td><strong>Fixed-size + overlap</strong></td><td>Window of W units stepping by W−O; boundary-agnostic</td><td>Default baseline; homogeneous prose. Our <code>chunkWords()</code></td></tr>
+  <tr><td><strong>Semantic</strong></td><td>Embed consecutive sentences; split at top-% dissimilarity spikes</td><td>Topic-shifting docs; costs an embedding pass at ingestion</td></tr>
+  <tr><td><strong>Structure-aware</strong></td><td>Split at Markdown headers, HTML tags, function boundaries; tables never split mid-row</td><td>Anything with real structure — the book, code, docs</td></tr>
+  <tr><td><strong>Parent-child</strong></td><td>Index small child chunks (≈128 tok) for precision; return big parent chunks (≈512 tok) for context</td><td>Decouples retrieval granularity from generation context</td></tr>
+</table>
+<p>A chunk must be (1) small enough for the embedding window, (2) semantically coherent, (3) self-sufficient when retrieved alone. Miss one and either retrieval or generation pays.</p>
+
+<h2><span class="secno">§3</span>Chunk sizing, empirically (book table 16.3)</h2>
+<table>
+  <tr><th>Use case</th><th>Chunk size</th><th>Overlap</th></tr>
+  <tr><td>Factoid QA (precise facts)</td><td>128–256 tokens</td><td>20–32 tokens</td></tr>
+  <tr><td>Summarization / synthesis</td><td>512–1024 tokens</td><td>64–128 tokens</td></tr>
+  <tr><td>Code retrieval</td><td>full function</td><td>none</td></tr>
+  <tr><td>Legal / regulatory</td><td>paragraph-level</td><td>1 sentence</td></tr>
+  <tr><td>Conversational / chat</td><td>256–512 tokens</td><td>32–64 tokens</td></tr>
+</table>
+<p class="quiet">Our labs chunk <em>words</em>, not tokens — same mechanics, one honest simplification at this scale.</p>
+
+<h2><span class="secno">§4</span>The chunker, LangChain → TypeScript</h2>
+<div class="code-block"><div class="code-title">Listing 16.2 translated — the whole core in 9 lines</div><pre><code><span class="tok-kw">function</span> <span class="tok-fn">chunkWords</span>(text: <span class="tok-typ">string</span>, size: <span class="tok-typ">number</span>, overlap: <span class="tok-typ">number</span>) {
+  <span class="tok-kw">if</span> (overlap &gt;= size) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">"overlap must be smaller than size"</span>);
+  <span class="tok-kw">const</span> words = text.<span class="tok-fn">split</span>(<span class="tok-str">/\s+/</span>).<span class="tok-fn">filter</span>(Boolean);
+  <span class="tok-kw">const</span> step = size − overlap;
+  <span class="tok-kw">const</span> out: <span class="tok-typ">string</span>[] = [];
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> start = 0; start &lt; words.length; start += step) {
+    <span class="tok-kw">const</span> window = words.<span class="tok-fn">slice</span>(start, start + size);
+    <span class="tok-kw">if</span> (window.length === 0) <span class="tok-kw">break</span>;
+    out.<span class="tok-fn">push</span>(window.<span class="tok-fn">join</span>(<span class="tok-str">" "</span>));
+    <span class="tok-kw">if</span> (start + size &gt;= words.length) <span class="tok-kw">break</span>; <span class="tok-com">// window covered the tail</span>
+  }
+  <span class="tok-kw">return</span> out;
+}</code></pre></div>
+<table>
+  <tr><th>LangChain (Python, book)</th><th>This course (TypeScript)</th></tr>
+  <tr><td><code>RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=64)</code></td><td><code>chunkWords(text, size, overlap)</code> — fixed core; recursion over separators is the stretch</td></tr>
+  <tr><td><code>SemanticChunker(embeddings, percentile=95)</code></td><td>embed pairs of sentences, split at cosine drops — same pieces you already have</td></tr>
+  <tr><td><code>ParentDocumentRetriever(child_splitter, parent_splitter)</code></td><td>two chunk sizes + an <code>id → parent</code> map; lesson 0005 material</td></tr>
+</table>
+
+<h2><span class="secno">§5</span>Embeddings — what, which, how</h2>
+<p>An embedding is a <strong>dense vector whose direction encodes meaning</strong> (MiniLM: 384 dims; OpenAI <code>text-embedding-3-large</code>: 3072). Similar texts → small angle → cosine near 1; unrelated ≈ 0; there is no &ldquo;opposite text&rdquo; in practice, so real scores live in ≈ 0.0–0.6. <strong>The embedding model is the single most impactful component choice in a RAG system — it sets the quality ceiling for retrieval</strong> (book §16.9.1). Vectors from different models are <em>not comparable</em>: mixing them corrupts the space.</p>
+<div class="code-block"><div class="code-title">local, free, offline after first download — the lab stack</div><pre><code><span class="tok-kw">import</span> { pipeline } <span class="tok-kw">from</span> <span class="tok-str">"@huggingface/transformers"</span>;
+<span class="tok-kw">const</span> embed = <span class="tok-kw">await</span> <span class="tok-fn">pipeline</span>(<span class="tok-str">"feature-extraction"</span>, <span class="tok-str">"Xenova/all-MiniLM-L6-v2"</span>);
+<span class="tok-kw">const</span> tensor = <span class="tok-kw">await</span> <span class="tok-fn">embed</span>(text, { pooling: <span class="tok-str">"mean"</span>, normalize: <span class="tok-str">true</span> });
+<span class="tok-com">// normalize: true → unit length → cosine degenerates to a plain dot product.</span>
+<span class="tok-com">// model + pooling + normalize — three decisions hiding inside every embedding API.</span></code></pre></div>
+
+<h2><span class="secno">§6</span>The wire shape (OpenAI-compatible, everywhere)</h2>
+<div class="code-block"><div class="code-title">POST {base}/embeddings — one contract, every provider</div><pre><code>{ <span class="tok-str">"model"</span>: <span class="tok-str">"&lt;embedding-model-id&gt;"</span>,
+  <span class="tok-str">"input"</span>: [<span class="tok-str">"chunk 1 text"</span>, <span class="tok-str">"chunk 2 text"</span>] }
+→ { <span class="tok-str">"data"</span>: [{ <span class="tok-str">"embedding"</span>: [0.021, −0.013, …], <span class="tok-str">"index"</span>: 0 }],
+    <span class="tok-str">"usage"</span>: { <span class="tok-str">"prompt_tokens"</span>: n } }</code></pre></div>
+<table>
+  <tr><th>Provider</th><th>Model</th><th>Dims</th><th>Notes (verified 2026-09-07)</th></tr>
+  <tr><td>OpenAI</td><td><code>text-embedding-3-large</code></td><td>3072</td><td>Reference implementation of the shape; MTEB 64.6</td></tr>
+  <tr><td>Voyage</td><td><code>voyage-4-large</code></td><td>1024</td><td>Anthropic&rsquo;s recommended embeddings partner</td></tr>
+  <tr><td>Local (lab)</td><td><code>Xenova/all-MiniLM-L6-v2</code></td><td>384</td><td>Free, CPU, offline after ~25 MB download. Our default</td></tr>
+  <tr><td>Z.AI / GLM</td><td>—</td><td>—</td><td><strong>No embeddings on the global API</strong> — verified live 2026-09-07: <code>GET /api/paas/v4/models</code> lists chat models only; <code>/embeddings</code> rejects <code>embedding-2</code>/<code>embedding-3</code> with error 1211 &ldquo;Unknown Model&rdquo;</td></tr>
+</table>
+<p class="quiet">Cosine ranking over N vectors is O(N) — fine to thousands. The moment it isn&rsquo;t, you reach for a vector index; that&rsquo;s lesson 0005&rsquo;s problem, not today&rsquo;s.</p>
+
+</body>
+</html>
