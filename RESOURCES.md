@@ -39,6 +39,9 @@ Prune ruthlessly as the course progresses; a resource that goes stale comes off 
   The canonical conceptual piece: workflows vs agents, the five composition patterns, tool-design principles. Read before touching any framework.
 - [Anthropic — Writing Effective Tools for Agents](https://www.anthropic.com/engineering/writing-tools-for-agents)
   Tool design in practice: token efficiency, response formats, namespacing, evals. The sequel to the above.
+- [Anthropic — Tool use with Claude](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)
+  The canonical wire-protocol doc for tool calling: `tool_use`/`tool_result` blocks, stop reasons, parallel calls. Lesson 0002's primary source; our [in-course cheat sheet](reference/anthropic-tool-loop.html) compresses it. Verified live 2026-09-07 — note docs now live on `platform.claude.com`, not `docs.anthropic.com`.
+  - Companion pages: [Handle tool calls](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls) (error signaling — errors as results) · [Parallel tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use) · [Handling stop reasons](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons).
 - [Anthropic — Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
   Context as a finite resource: compaction, note-taking, sub-agents, just-in-time retrieval. The RAG↔agentic-search bridge.
 

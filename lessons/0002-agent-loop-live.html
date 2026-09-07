@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0002 — The agent loop, live</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 0002 · ~45 minutes · Core track</p>
+<h1>The agent loop, live</h1>
+<p class="subtitle">Claude is about to call your TypeScript function — twice, in one turn — and weave the results into an answer. Zero SDKs, one hundred ninety lines, one honest <code>unknown</code>.</p>
+
+<div class="callout win">
+  <p class="callout-title">Today's win</p>
+  <p>You will run a real agent: a loop where Claude, given a question it cannot answer, requests <em>your</em> tool, receives its output through an append-only ledger, and answers from it. Everything you hand-wrote in <a href="0001-python-to-typescript-agent-types.html">Lesson 0001</a> — the discriminated union, the narrowing, the exhaustive switch — earns its keep today against a live model.</p>
+</div>
+
+<h2><span class="secno">§1</span>Why lesson two is a loop</h2>
+<p>Your textbook names the layer you're building: after prompt engineering (what you say), context engineering (what the model sees), and harness engineering (the environment the agent runs in) comes <strong>loop engineering</strong> — &ldquo;designing the iterative control structure that drives an agent toward a goal autonomously&rdquo; (Roitman 2026, ch. 19; <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>). Anthropic's canonical piece, <a href="https://www.anthropic.com/engineering/building-effective-agents">Building Effective Agents</a>, draws the same line: a workflow runs a fixed script of model calls, while an <em>agent</em> loops — model, tools, stop condition — and decides its own path. Lesson 0001 built the dispatch table. Today you connect it to the model and close the loop yourself, wire format and all, so no framework ever feels like magic.</p>
+
+<h2><span class="secno">§2</span>The round trip in four beats</h2>
+<p>The Messages API tool protocol is one cycle, repeated until the model stops asking (full wire cheat sheet: <a href="../reference/anthropic-tool-loop.html">the tool-use round trip</a>):</p>
+<ol>
+  <li><strong>You declare tools</strong> — name, <em>description</em> (this is a prompt — the model reads it to decide when to call), and a <code>input_schema</code> in JSON Schema. No TypeScript crosses this boundary.</li>
+  <li><strong>The model calls</strong> — but &ldquo;calls&rdquo; means <em>emits data</em>: a response with <code>stop_reason: "tool_use"</code> and a <code>{type: "tool_use", id, name, input}</code> block. The model never executes anything; validating and dispatching that JSON is <em>your</em> program's job (<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview">docs</a>). One turn may carry several tool calls — you'll see it happen.</li>
+  <li><strong>You answer</strong> — append the assistant turn <em>verbatim</em>, then a <code>user</code> message containing <code>{type: "tool_result", tool_use_id, content}</code> blocks. Yes, tool results travel as <em>user</em> messages; there is no &ldquo;tool&rdquo; role.</li>
+  <li><strong>Loop</strong> — call again with the grown ledger. <code>stop_reason</code> is your control signal: <code>"tool_use"</code> → back to beat 3; anything else → print the text, stop.</li>
+</ol>
+<p>Notice what this is: the conversation is an <strong>append-only ledger</strong>, and its content blocks — <code>text</code> | <code>tool_use</code> | <code>tool_result</code> — are a discriminated union arriving over HTTP. Lesson 0001's pattern, now on the wire. And the block you receive is untrusted JSON exactly like <code>JSON.parse</code> output: <code>res.json()</code> is typed <code>any</code>, and today — as promised — you park it in <code>unknown</code> and <em>hand-narrow it yourself</em> before the loop trusts a single byte.</p>
+
+<h2><span class="secno">§3</span>The lab — a real agent over the Guide</h2>
+<p>The tool is a tiny Hitchhiker's Guide corpus: five entries, deterministic, offline. That is deliberate — it's the seed of your RAG capstone (the model answers from <em>your</em> corpus, not its weights), and it keeps today's only network dependency the model itself. Work in <code>labs/</code> as before.</p>
+
+<div class="task">
+<ol>
+  <li><input type="checkbox"> <strong>Scaffold the lab</strong>:
+    <div class="code-block"><div class="code-title">shell — from the repository root (learn-ai-agents/)</div><pre><code>mkdir -p labs/0002-agent-loop <span class="tok-kw">&amp;&amp;</span> <span class="tok-kw">cd</span> labs/0002-agent-loop
+npm init -y
+npm pkg set <span class="tok-kw">type</span>=module          <span class="tok-com"># ESM — top-level await needs this</span>
+npm install --save-dev typescript tsx @types/node
+npx tsc --init</code></pre></div>
+    Then open <code>tsconfig.json</code> and make one edit — the 2026 (<abbr title="the native TypeScript 7 compiler">TS 7</abbr>) template writes <code>"types": []</code>, which <em>excludes</em> the Node types you just installed, so <code>process</code> and friends go unrecognized:
+    <div class="code-block"><div class="code-title">tsconfig.json — the one-line change</div><pre><code><span class="tok-str">"types"</span>: [<span class="tok-str">"node"</span>],   <span class="tok-com">// was: [] — loads @types/node (process, fetch, …)</span></code></pre></div></li>
+  <li><input type="checkbox"> <strong>Create <code>agent-loop.ts</code></strong> — the whole agent, exactly as verified running:
+    <div class="code-block"><div class="code-title">labs/0002-agent-loop/agent-loop.ts</div><pre><code><span class="tok-com">// The agent loop, live: Claude + one tool + an append-only ledger.</span>
+
+<span class="tok-com">// ---------- 1. The tool: a tiny Guide corpus (the seed of RAG) ----------</span>
+
+<span class="tok-kw">const</span> GUIDE_ENTRIES: <span class="tok-typ">Record</span>&lt;<span class="tok-typ">string</span>, <span class="tok-typ">string</span>&gt; = {
+  towel:
+    <span class="tok-str">"About the most massively useful thing an interstellar hitchhiker can have: warmth, shade, "</span> +
+    <span class="tok-str">"a weapon, a sail. Carrying one signals to strags that you know where your towel is."</span>,
+  <span class="tok-str">"babel fish"</span>:
+    <span class="tok-str">"Small, yellow, leech-like, and probably the oddest thing in the Universe. Pop it in your "</span> +
+    <span class="tok-str">"ear and understand anything said in any language. Famously disproved the existence of God by accident."</span>,
+  <span class="tok-str">"pan galactic gargle blaster"</span>:
+    <span class="tok-str">"The best drink in existence. The effect is like having your brains smashed out by a slice "</span> +
+    <span class="tok-str">"of lemon wrapped round a large gold brick. Never more than two."</span>,
+  <span class="tok-str">"forty two"</span>:
+    <span class="tok-str">"The Answer to the Great Question of Life, the Universe and Everything, computed over 7.5 "</span> +
+    <span class="tok-str">"million years. Nobody knows what the actual Question is."</span>,
+  improbability:
+    <span class="tok-str">"Crosses interstellar distances without all that tedious mucking about in hyperspace, by "</span> +
+    <span class="tok-str">"passing through every point in the Universe simultaneously."</span>,
+};
+
+<span class="tok-kw">function</span> <span class="tok-fn">lookupGuideEntry</span>(topic: <span class="tok-typ">string</span>): <span class="tok-typ">string</span> {
+  <span class="tok-kw">const</span> key = topic.trim().toLowerCase();
+  <span class="tok-kw">return</span> GUIDE_ENTRIES[key] ?? <span class="tok-str">`No Guide entry for "${topic}" — the researchers are out to lunch.`</span>;
+}
+
+<span class="tok-com">// The tool as the MODEL sees it: a name, a description (this is a prompt!),</span>
+<span class="tok-com">// and a JSON Schema for the arguments. No TypeScript crosses this boundary.</span>
+<span class="tok-kw">const</span> TOOLS = [
+  {
+    name: <span class="tok-str">"lookup_guide_entry"</span>,
+    description:
+      <span class="tok-str">"Look up an entry from the Hitchhiker's Guide to the Galaxy. Returns the entry text "</span> +
+      <span class="tok-str">"for a topic. Topic keys are short, e.g. 'towel', 'babel fish', 'forty two'."</span>,
+    input_schema: {
+      type: <span class="tok-str">"object"</span>,
+      properties: {
+        topic: {
+          type: <span class="tok-str">"string"</span>,
+          description: <span class="tok-str">"The Guide topic to look up, e.g. 'towel' or 'babel fish'"</span>,
+        },
+      },
+      required: [<span class="tok-str">"topic"</span>],
+    },
+  },
+];
+
+<span class="tok-com">// ---------- 2. Narrow the response — lesson 0001's discipline, on real model output ----------</span>
+
+<span class="tok-kw">interface</span> <span class="tok-typ">TextBlock</span> {
+  type: <span class="tok-str">"text"</span>;
+  text: <span class="tok-typ">string</span>;
+}
+<span class="tok-kw">interface</span> <span class="tok-typ">ToolUseBlock</span> {
+  type: <span class="tok-str">"tool_use"</span>;
+  id: <span class="tok-typ">string</span>;
+  name: <span class="tok-typ">string</span>;
+  input: <span class="tok-typ">Record</span>&lt;<span class="tok-typ">string</span>, <span class="tok-typ">unknown</span>&gt;;
+}
+<span class="tok-kw">type</span> <span class="tok-typ">ContentBlock</span> = TextBlock | ToolUseBlock;
+
+<span class="tok-kw">interface</span> <span class="tok-typ">ModelReply</span> {
+  stop_reason: <span class="tok-typ">string</span>;
+  content: ContentBlock[];
+}
+
+<span class="tok-kw">function</span> <span class="tok-fn">isTextBlock</span>(b: <span class="tok-typ">unknown</span>): b is TextBlock {
+  <span class="tok-kw">return</span> (
+    <span class="tok-kw">typeof</span> b === <span class="tok-str">"object"</span> &amp;&amp; b !== <span class="tok-kw">null</span> &amp;&amp;
+    <span class="tok-str">"type"</span> <span class="tok-kw">in</span> b &amp;&amp; b.type === <span class="tok-str">"text"</span> &amp;&amp;
+    <span class="tok-str">"text"</span> <span class="tok-kw">in</span> b &amp;&amp; <span class="tok-kw">typeof</span> b.text === <span class="tok-str">"string"</span>
+  );
+}
+
+<span class="tok-kw">function</span> <span class="tok-fn">isToolUseBlock</span>(b: <span class="tok-typ">unknown</span>): b is ToolUseBlock {
+  <span class="tok-kw">return</span> (
+    <span class="tok-kw">typeof</span> b === <span class="tok-str">"object"</span> &amp;&amp; b !== <span class="tok-kw">null</span> &amp;&amp;
+    <span class="tok-str">"type"</span> <span class="tok-kw">in</span> b &amp;&amp; b.type === <span class="tok-str">"tool_use"</span> &amp;&amp;
+    <span class="tok-str">"id"</span> <span class="tok-kw">in</span> b &amp;&amp; <span class="tok-kw">typeof</span> b.id === <span class="tok-str">"string"</span> &amp;&amp;
+    <span class="tok-str">"name"</span> <span class="tok-kw">in</span> b &amp;&amp; <span class="tok-kw">typeof</span> b.name === <span class="tok-str">"string"</span> &amp;&amp;
+    <span class="tok-str">"input"</span> <span class="tok-kw">in</span> b &amp;&amp; <span class="tok-kw">typeof</span> b.input === <span class="tok-str">"object"</span> &amp;&amp; b.input !== <span class="tok-kw">null</span>
+  );
+}
+
+<span class="tok-kw">function</span> <span class="tok-fn">parseReply</span>(raw: <span class="tok-typ">unknown</span>): ModelReply {
+  <span class="tok-kw">if</span> (<span class="tok-kw">typeof</span> raw !== <span class="tok-str">"object"</span> || raw === <span class="tok-kw">null</span>) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">"response: not an object"</span>);
+  <span class="tok-kw">if</span> (!(<span class="tok-str">"stop_reason"</span> <span class="tok-kw">in</span> raw) || <span class="tok-kw">typeof</span> raw.stop_reason !== <span class="tok-str">"string"</span>)
+    <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">"response: stop_reason missing or not a string"</span>);
+  <span class="tok-kw">if</span> (!(<span class="tok-str">"content"</span> <span class="tok-kw">in</span> raw) || !<span class="tok-typ">Array</span>.isArray(raw.content))
+    <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">"response: content missing or not an array"</span>);
+  <span class="tok-kw">const</span> blocks = raw.content.filter(
+    (b): b is ContentBlock =&gt; isTextBlock(b) || isToolUseBlock(b),
+  );
+  <span class="tok-com">// Blocks we don't model yet (e.g. 'thinking') are dropped, not trusted.</span>
+  <span class="tok-kw">return</span> { stop_reason: raw.stop_reason, content: blocks };
+}
+
+<span class="tok-com">// ---------- 3. The ledger: messages in real wire format ----------</span>
+
+<span class="tok-kw">interface</span> <span class="tok-typ">ToolResultBlock</span> {
+  type: <span class="tok-str">"tool_result"</span>;
+  tool_use_id: <span class="tok-typ">string</span>;
+  content: <span class="tok-typ">string</span>;
+}
+
+<span class="tok-kw">type</span> <span class="tok-typ">LedgerMessage</span> =
+  | { role: <span class="tok-str">"user"</span>; content: <span class="tok-typ">string</span> }          <span class="tok-com">// our questions</span>
+  | { role: <span class="tok-str">"assistant"</span>; content: ContentBlock[] }  <span class="tok-com">// echoed back VERBATIM</span>
+  | { role: <span class="tok-str">"user"</span>; content: ToolResultBlock[] };   <span class="tok-com">// tool results ride as user blocks</span>
+
+<span class="tok-com">// ---------- 4. Transport: one HTTP call per hop ----------</span>
+
+<span class="tok-kw">async function</span> <span class="tok-fn">callClaude</span>(messages: LedgerMessage[]): <span class="tok-typ">Promise</span>&lt;ModelReply&gt; {
+  <span class="tok-kw">const</span> key = process.env.ANTHROPIC_API_KEY;
+  <span class="tok-kw">if</span> (!key) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">"ANTHROPIC_API_KEY not set (try --env-file=../../.env)"</span>);
+
+  <span class="tok-kw">const</span> res = <span class="tok-kw">await</span> <span class="tok-fn">fetch</span>(<span class="tok-str">"https://api.anthropic.com/v1/messages"</span>, {
+    method: <span class="tok-str">"POST"</span>,
+    headers: {
+      <span class="tok-str">"x-api-key"</span>: key,
+      <span class="tok-str">"anthropic-version"</span>: <span class="tok-str">"2023-06-01"</span>,
+      <span class="tok-str">"content-type"</span>: <span class="tok-str">"application/json"</span>,
+    },
+    body: <span class="tok-typ">JSON</span>.<span class="tok-fn">stringify</span>({
+      model: <span class="tok-str">"claude-sonnet-4-5"</span>,   <span class="tok-com">// or whatever your Console lists</span>
+      max_tokens: <span class="tok-str">1024</span>,
+      tools: TOOLS,
+      messages,
+    }),
+  });
+  <span class="tok-kw">if</span> (!res.ok) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`API ${res.status}: ${await res.text()}`</span>);
+  <span class="tok-kw">const</span> raw: <span class="tok-typ">unknown</span> = <span class="tok-kw">await</span> res.json();  <span class="tok-com">// park it: res.json() is typed any</span>
+  <span class="tok-kw">return</span> <span class="tok-fn">parseReply</span>(raw);                    <span class="tok-com">// unknown in, typed out — or it throws</span>
+}
+
+<span class="tok-com">// ---------- 5. Dispatch: model JSON -&gt; typed tool result ----------</span>
+
+<span class="tok-kw">function</span> <span class="tok-fn">runTool</span>(block: ToolUseBlock): ToolResultBlock {
+  <span class="tok-kw">switch</span> (block.name) {
+    <span class="tok-kw">case</span> <span class="tok-str">"lookup_guide_entry"</span>: {
+      <span class="tok-kw">const</span> topic = block.input.topic;  <span class="tok-com">// unknown — the model sent this</span>
+      <span class="tok-kw">if</span> (<span class="tok-kw">typeof</span> topic !== <span class="tok-str">"string"</span>) {
+        <span class="tok-kw">return</span> { type: <span class="tok-str">"tool_result"</span>, tool_use_id: block.id, content: <span class="tok-str">"error: 'topic' must be a string"</span> };
+      }
+      <span class="tok-kw">return</span> { type: <span class="tok-str">"tool_result"</span>, tool_use_id: block.id, content: <span class="tok-fn">lookupGuideEntry</span>(topic) };
+    }
+    <span class="tok-kw">default</span>:
+      <span class="tok-com">// Open world: tool names come from a model and can be anything.</span>
+      <span class="tok-com">// The default arm is not dead code — it IS the error handling.</span>
+      <span class="tok-kw">return</span> {
+        type: <span class="tok-str">"tool_result"</span>,
+        tool_use_id: block.id,
+        content: <span class="tok-str">`error: unknown tool "${block.name}"`</span>,
+      };
+  }
+}
+
+<span class="tok-com">// ---------- 6. The loop ----------</span>
+
+<span class="tok-kw">const</span> messages: LedgerMessage[] = [
+  {
+    role: <span class="tok-str">"user"</span>,
+    content: <span class="tok-str">"What does the Guide say about towels? And what exactly is a Babel fish?"</span>,
+  },
+];
+
+<span class="tok-kw">const</span> MAX_HOPS = <span class="tok-str">5</span>;  <span class="tok-com">// circuit breaker — the book's canonical loop ships with one</span>
+<span class="tok-kw">let</span> finished = <span class="tok-kw">false</span>;
+
+<span class="tok-kw">for</span> (<span class="tok-kw">let</span> hop = <span class="tok-str">1</span>; hop &lt;= MAX_HOPS; hop++) {
+  <span class="tok-kw">const</span> reply = <span class="tok-kw">await</span> <span class="tok-fn">callClaude</span>(messages);
+  messages.push({ role: <span class="tok-str">"assistant"</span>, content: reply.content });  <span class="tok-com">// echo verbatim</span>
+
+  <span class="tok-kw">if</span> (reply.stop_reason !== <span class="tok-str">"tool_use"</span>) {
+    <span class="tok-kw">for</span> (<span class="tok-kw">const</span> block <span class="tok-kw">of</span> reply.content) {
+      <span class="tok-kw">if</span> (block.type === <span class="tok-str">"text"</span>) console.<span class="tok-fn">log</span>(block.text);
+    }
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`\n— finished after ${hop} hop(s); stop_reason: ${reply.stop_reason}`</span>);
+    finished = <span class="tok-kw">true</span>;
+    <span class="tok-kw">break</span>;
+  }
+
+  <span class="tok-kw">const</span> calls = reply.content.filter(
+    (b): b is ToolUseBlock =&gt; b.type === <span class="tok-str">"tool_use"</span>,
+  );
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`hop ${hop}: model calls ${calls.length} tool(s)`</span>);
+  <span class="tok-kw">const</span> results = calls.<span class="tok-fn">map</span>(runTool);
+  <span class="tok-kw">for</span> (<span class="tok-kw">const</span> r <span class="tok-kw">of</span> results) {
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`  toolu_${r.tool_use_id.slice(-6)} "${r.content.slice(0, 48)}…"`</span>);
+  }
+  messages.push({ role: <span class="tok-str">"user"</span>, content: results });
+}
+
+<span class="tok-kw">if</span> (!finished) console.<span class="tok-fn">warn</span>(<span class="tok-str">"Hit the hop cap — the model never stopped calling tools."</span>);
+</code></pre></div></li>
+  <li><input type="checkbox"> <strong>Typecheck, then run</strong> — both, in this order, every time:
+    <div class="code-block"><div class="code-title">shell — from labs/0002-agent-loop/ (.env is the repo-root key file from session 1)</div><pre><code>npx tsc --noEmit                                <span class="tok-com"># your mypy — must print nothing</span>
+npx tsx --env-file=../../.env agent-loop.ts     <span class="tok-com"># your pytest — runs it live</span></code></pre></div>
+    Expect this shape (the model's prose will differ; the structure won't):
+    <div class="code-block"><div class="code-title">actual verified output, 2026-09-07 — note the two calls in ONE hop</div><pre><code>hop 1: model calls 2 tool(s)
+  toolu_ACT4vw "About the most massively useful thing an interst…"
+  toolu_h4dmaM "Small, yellow, leech-like, and probably the odde…"
+According to the Hitchhiker's Guide to the Galaxy:
+
+**Towels:** About the most massively useful thing an interstellar hitchhiker can have: warmth,
+shade, a weapon, a sail. Carrying one signals to strags that you know where your towel is.
+
+**Babel fish:** Small, yellow, leech-like, and probably the oddest thing in the Universe. …
+
+— finished after 2 hop(s); stop_reason: end_turn</code></pre></div>
+    Two things happened that you should pause on. <strong>Parallel tool use</strong>: the model requested <em>both</em> lookups in a single turn, and your loop handled it for free because it answers <em>every</em> <code>tool_use</code> block (<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use">docs</a>). And <strong>the ledger worked</strong>: three messages went out on hop 2 — your question, the echoed assistant turn, the two results — and the model answered from <em>your corpus</em>, not its weights. That property is the whole RAG capstone in miniature.</li>
+  <li><input type="checkbox"> <strong>Exercise A — the honest miss (prompt-only).</strong> Change the question to <code>"What does the Guide say about React hooks?"</code>. Predict the output before running. The lookup misses, your tool returns a friendly error string as its <em>result</em> (not a thrown exception), and watch what the model does with it. This is hallucination-resistance by construction — and the errors-as-results pattern from the cheat sheet §5.</li>
+  <li><input type="checkbox"> <strong>Exercise B — break the ledger (the important one).</strong> Comment out the entire <code>messages.push({ role: "user", content: results });</code> line and re-run. The API responds <code>400</code>: <em>&ldquo;Each tool_use block must have a corresponding tool_result block in the next message.&rdquo;</em> The wire format is a type system, enforced server-side, billed per request — and today you saw its error message. Restore the line.</li>
+  <li><input type="checkbox"> <strong>Exercise C — grow the corpus.</strong> Add <code>"vogon poetry": "The third worst in the Universe…"</code> (or any entry you like), re-ask about it, and watch the model find it. You just changed the agent's knowledge without touching its code — the RAG instinct again.</li>
+</ol>
+</div>
+
+<div class="callout">
+  <p class="callout-title">Stretch — meter the loop (optional)</p>
+  <p>Log <code>usage.input_tokens + usage.output_tokens</code> per hop (it's in the same response JSON — extend <code>ModelReply</code> and the guards). Total the run. Then price it against the <a href="https://platform.claude.com/docs/en/models/overview">models overview</a> table. Knowing what a loop <em>costs</em> is the first half of book ch. 19 §19.12, <em>The Economics of Loops</em>.</p>
+</div>
+
+<h2><span class="secno">§4</span>Check yourself</h2>
+<p>Retrieval, not review. One of these five is an old friend making a spaced return — first attempt is the one that counts.</p>
+
+<div class="quiz" data-quiz="lesson0002"></div>
+<script type="application/json" id="lesson0002">
+[
+  {
+    "q": "A response lands with stop_reason: \"tool_use\". What happens next in the loop?",
+    "options": ["You execute tools", "The model continues", "The conversation ends", "The server retries"],
+    "answer": 0,
+    "explain": "tool_use means the model stopped to ask YOU: run the named functions, append tool_result blocks in a user message, and call again. The model never executes anything itself — and it is your loop, not the API, that drives the repetition."
+  },
+  {
+    "q": "Your finished tool call travels back to the API inside which message?",
+    "options": ["a user message", "an assistant message", "a system message", "a tool message"],
+    "answer": 0,
+    "explain": "The Messages API has no 'tool' role — tool_result blocks ride in a user turn, and assistant turns are only ever echoes of what the model produced. (OpenAI's API does use a tool role: a classic translation trap when reading Python examples.)"
+  },
+  {
+    "q": "Claude never runs your TypeScript function. What it actually emits is…",
+    "options": ["JSON you dispatch", "a function pointer", "an RPC handshake", "a linked module"],
+    "answer": 0,
+    "explain": "A tool_use block is data — a name plus JSON input. Your code validates that JSON (it arrives as unknown) and dispatches it. The validate-and-dispatch layer you hand-wrote today is exactly what agent frameworks and MCP formalize — which is why you wrote it by hand first."
+  },
+  {
+    "q": "JSON.parse hands you a value the compiler cannot vouch for (its signature says any). The type-safe move is…",
+    "options": ["narrow it first", "annotate it any", "label it string", "iterate it now"],
+    "answer": 0,
+    "explain": "JSON.parse is declared to return any — the type system vouches for nothing. Park the value in unknown (const d: unknown = JSON.parse(raw)), then narrow: typeof checks, a type guard, or a zod schema. Treating it as any is '# type: ignore' forever; calling it string or iterating it won't compile from unknown — which is the point: the compiler makes you prove what the data is before touching it."
+  },
+  {
+    "q": "Your loop refuses to run past five hops. That cap exists because…",
+    "options": ["runaway agents burn money", "the API forbids six", "tools fail when idle", "models forget earlier hops"],
+    "answer": 0,
+    "explain": "A model stuck calling tools forever is a production incident with a per-token meter running. The canonical loop in book ch. 19 §19.4 takes max_steps as a parameter, and Anthropic's Building Effective Agents lists action limits among the guardrails that make an agent safe to run. The other three options are inventions."
+  }
+]
+</script>
+<script src="../assets/quiz.js"></script>
+
+<h2><span class="secno">§5</span>Primary sources &amp; reading</h2>
+<div class="cite">
+<ul>
+  <li><strong>Primary (read next, ~20 min):</strong> <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview">Anthropic — Tool use with Claude</a> (official). The round trip you just built, documented by the people who run the other end. Follow it with <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls">Handle tool calls</a> for result formatting and error signaling.</li>
+  <li><strong>From your book</strong> (Roitman 2026, <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>): ch. 19 opening + <strong>§19.4 <em>The Loop in Pseudocode</em></strong> (pp. 383–387) — the prompt→context→harness→loop progression and the <code>max_steps</code> loop you just typed. §19.12 on loop economics pairs with the stretch.</li>
+  <li><strong>When you design your own tools</strong> (not today, soon): <a href="https://www.anthropic.com/engineering/writing-tools-for-agents">Anthropic — Writing Effective Tools for Agents</a>. Today's tool description was a prompt; this is the craft guide.</li>
+  <li><strong>Keep open while coding:</strong> the <a href="../reference/anthropic-tool-loop.html">tool-use round-trip cheat sheet</a> and the <a href="../reference/python-typescript-phrasebook.html">phrasebook</a>. Full list: <code>RESOURCES.md</code>.</li>
+</ul>
+</div>
+
+<div class="callout note">
+  <p class="callout-title">Your teacher is on call</p>
+  <p>A 400 that reads like a riddle, a guard that won't narrow, a question about why the model put <em>thinking</em> in your ledger — <strong>ask in the chat</strong>. Today's lesson has more moving parts than the last; confusion compounds faster here.</p>
+</div>
+
+<h2><span class="secno">§6</span>Where this goes</h2>
+<p><strong>Lesson 0003 — Trust, but validate:</strong> your hand-rolled guards retire into <a href="https://zod.dev">zod</a> schemas (<code>z.object(...).parse(raw)</code> — your <code>parseReply</code> in one line), and you'll see how the official SDK types this same round trip (book ch. 18 — the harness). After that the corpus grows real: chunking and embeddings, the RAG module proper.</p>
+
+<div class="lesson-footer">
+  <p>Lesson 0002 of the <em>Agents &amp; RAG in TypeScript</em> course · <a href="../reference/anthropic-tool-loop.html">Round-trip cheat sheet</a> · <a href="../reference/python-typescript-phrasebook.html">Phrasebook</a> · <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview">Primary source</a> · Next: <em>Trust, but validate</em></p>
+  <div class="lesson-nav">
+    <a class="pill" href="0001-python-to-typescript-agent-types.html">prev: 0001 · python → typescript agent types</a>
+    <span class="pill">next: 0003 · trust, but validate</span>
+  </div>
+</div>
+
+</body>
+</html>
