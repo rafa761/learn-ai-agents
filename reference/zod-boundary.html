@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — zod at the trust boundary</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Reference · validation cheat sheet · verified 2026-09-07 · zod 4.5.4 · @anthropic-ai/sdk 0.124.0</p>
+<h1>zod at the trust boundary</h1>
+<p class="subtitle">The four moves that replace hand-written guards at any boundary the compiler cannot vouch for — model output above all. Print me.</p>
+
+<p>Built in <a href="../lessons/0003-trust-but-validate.html">Lesson 0003</a>. Companion references: the <a href="anthropic-tool-loop.html">tool-use round-trip cheat sheet</a> and the <a href="python-typescript-phrasebook.html">phrasebook</a>. Canonical source: <a href="https://zod.dev">zod docs</a>.</p>
+
+<h2><span class="secno">§1</span>The four moves</h2>
+<div class="code-block"><div class="code-title">define → parse → infer → dispatch</div><pre><code><span class="tok-kw">import</span> { z } <span class="tok-kw">from</span> <span class="tok-str">"zod"</span>;
+
+<span class="tok-com">// 1. DEFINE — the schema is a value; the model's world, in code</span>
+<span class="tok-kw">const</span> Args = <span class="tok-typ">z</span>.<span class="tok-fn">object</span>({ topic: <span class="tok-typ">z</span>.<span class="tok-fn">string</span>() });
+
+<span class="tok-com">// 2. PARSE — unknown in, proven value out (or a typed failure)</span>
+<span class="tok-kw">const</span> r = Args.<span class="tok-fn">safeParse</span>(block.input);          <span class="tok-com">// block.input: unknown</span>
+
+<span class="tok-com">// 3. INFER — the TYPE comes from the schema; one source of truth</span>
+<span class="tok-kw">type</span> <span class="tok-typ">Args</span> = <span class="tok-typ">z</span>.<span class="tok-fn">infer</span>&lt;<span class="tok-kw">typeof</span> Args&gt;; <span class="tok-com">// the type is DERIVED, never declared twice</span>
+
+<span class="tok-com">// 4. DISPATCH — only proven values reach your functions</span>
+<span class="tok-kw">if</span> (r.success) <span class="tok-fn">lookup</span>(r.data.topic);              <span class="tok-com">// r.data.topic: string</span></code></pre></div>
+<p>Interfaces describe; schemas <strong>enforce</strong>. A <code>z.object</code> is checked at runtime and stripped of unknown keys by default — the same runtime the model talks to. Declare the discriminated union (<code>z.discriminatedUnion("type", [Text, ToolUse])</code>) and narrowing works exactly as it did with hand-written interfaces.</p>
+
+<h2><span class="secno">§2</span><code>parse</code> vs <code>safeParse</code> — closed world vs open world</h2>
+<table class="ref-table">
+  <tr><th>call</th><th>on bad input</th><th>use when</th></tr>
+  <tr><td><code>Schema.parse(x)</code></td><td><strong>throws</strong> <code>ZodError</code></td><td>the shape is on <em>you</em>: your config, a schema you own — failure is a bug, crash loudly</td></tr>
+  <tr><td><code>Schema.safeParse(x)</code></td><td>returns <code>{ success: false, error }</code></td><td>the shape is on <em>the world</em>: model output, user input, third-party JSON — failure is data, route it</td></tr>
+</table>
+<p>Model-adjacent boundaries are open world almost by definition. The envelope of an API you call can be <em>closed-ish</em> (parse, throw — your transport is broken); the content the model produced is open (safeParse, drop or report).</p>
+
+<h2><span class="secno">§3</span>Errors are results</h2>
+<div class="code-block"><div class="code-title">a rejected tool call becomes the model's next input</div><pre><code><span class="tok-kw">const</span> r = Args.<span class="tok-fn">safeParse</span>(block.input);
+<span class="tok-kw">const</span> content = r.success
+  ? <span class="tok-fn">lookup</span>(r.data.topic)
+  : <span class="tok-str">`error: invalid arguments\n</span><span class="tok-str">${z.prettifyError(r.error)}`</span>;  <span class="tok-com">// human- AND model-readable</span>
+<span class="tok-kw">return</span> { <span class="tok-kw">type</span>: <span class="tok-str">"tool_result"</span>, tool_use_id: block.id, content };</code></pre></div>
+<p>Not an exception — a <a href="anthropic-tool-loop.html">result the model reads and retries against</a> (Anthropic: <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls">handle tool calls — error signaling</a>). Caveat observed live (2026-09-07): the model <em>skims</em>. If your enforced schema drifts from the declared <code>input_schema</code>, it may guess values rather than read the error — keep declaration and enforcement in sync.</p>
+
+<h2><span class="secno">§4</span>pydantic ↔ zod phrasebook</h2>
+<table class="ref-table">
+  <tr><th>pydantic (Python)</th><th>zod 4 (TypeScript)</th></tr>
+  <tr><td><code>class Args(BaseModel): topic: str</code></td><td><code>const Args = z.object({ topic: z.string() })</code></td></tr>
+  <tr><td><code>Args.model_validate(data)</code></td><td><code>Args.parse(data)</code> (throws) / <code>Args.safeParse(data)</code></td></tr>
+  <tr><td><code>ValidationError</code></td><td><code>ZodError</code>; read <code>error.issues</code>, print <code>z.prettifyError(error)</code></td></tr>
+  <tr><td><code>Field(min_length=3)</code></td><td><code>z.string().min(3)</code></td></tr>
+  <tr><td><code>Literal["a","b"]</code> field</td><td><code>z.literal("a")</code> / <code>z.enum(["a","b"])</code></td></tr>
+  <tr><td><code>model_dump()</code></td><td><code>schema.parse(x)</code> output (already a plain object)</td></tr>
+  <tr><td><code>TypeAdapter[T]</code> / <code>Args</code> as a type</td><td><code>z.infer&lt;typeof Args&gt;</code> — the type is <em>derived</em>, never declared twice</td></tr>
+</table>
+
+<h2><span class="secno">§5</span>What the official SDK types — and what it never will</h2>
+<table class="ref-table">
+  <tr><th>surface</th><th>with raw fetch (lesson 0002)</th><th>with <code>@anthropic-ai/sdk</code></th></tr>
+  <tr><td>response envelope (<code>stop_reason</code>, <code>usage</code>, …)</td><td>your guards / your zod schema</td><td><strong>typed</strong> — <code>Anthropic.Message</code></td></tr>
+  <tr><td><code>content</code> block union</td><td>your <code>isTextBlock</code> / <code>isToolUseBlock</code></td><td><strong>typed + discriminated</strong> — <code>block.type</code> narrows</td></tr>
+  <tr><td>ledger message shapes</td><td>your <code>LedgerMessage</code></td><td><strong>typed</strong> — <code>Anthropic.MessageParam</code></td></tr>
+  <tr><td><code>tool_use.input</code></td><td><code>unknown</code></td><td><strong><code>unknown</code> — forever.</strong> The model's arguments are the one boundary no SDK can type; that's what your <code>Args</code> schema is for</td></tr>
+</table>
+<p>Docs: <a href="https://github.com/anthropics/anthropic-sdk-typescript">anthropic-sdk-typescript</a> · <a href="https://platform.claude.com/docs/en/api/sdks/typescript">official SDK docs</a>.</p>
+
+</body>
+</html>

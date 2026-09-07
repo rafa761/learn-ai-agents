@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0003 — Trust, but validate</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 0003 · ~45 minutes · Core track</p>
+<h1>Trust, but validate</h1>
+<p class="subtitle">Your ~90 lines of hand-rolled guards retire into zod schemas, the official SDK types the wire for you — and the one boundary that stays <code>unknown</code> forever is the one you missed on last session's quiz.</p>
+
+<div class="callout win">
+  <p class="callout-title">Today's win</p>
+  <p>You will watch a validation <em>failure become the model's next input</em>: bad tool arguments bounce back as a <code>tool_result</code> the model reads, understands, and corrects — and you'll sabotage your own schema to see what happens when the loop can't self-correct. The dispatch layer you hand-wrote in <a href="0002-agent-loop-live.html">Lesson 0002</a> becomes two libraries' worth of machinery you now understand from the inside.</p>
+</div>
+
+<h2><span class="secno">§1</span>Why lesson three is a schema</h2>
+<p>One question got past you last session: <em>&ldquo;Claude never runs your TypeScript function. What it actually emits is…&rdquo;</em> — <strong>JSON you dispatch</strong>. No shame in it; you'd <em>built</em> the right thing hours before missing the words for it. Today we make that mental model load-bearing: if the model emits JSON, then the layer that <em>validates and dispatches</em> that JSON is the heart of your agent — your textbook calls this layer part of the <strong>agent harness</strong> (Roitman 2026, ch. 18; <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>), the scaffolding between &ldquo;a model&rdquo; and &ldquo;an agent.&rdquo; Lesson 0002 built it by hand, on purpose. Today you learn the two tools that industrialize it: <a href="https://zod.dev">zod</a> — the pydantic of TypeScript, as a senior Python dev you already know this shape — and the <a href="https://github.com/anthropics/anthropic-sdk-typescript">official Anthropic SDK</a>, which types the wire you were guarding by hand.</p>
+
+<h2><span class="secno">§2</span>Three moves, that's the whole tool</h2>
+<ol>
+  <li><strong>The schema is a value; the type is derived.</strong> <code>const Args = z.object({ topic: z.string() })</code> is a runtime validator <em>and</em>, via <code>z.infer&lt;typeof Args&gt;</code>, the compile-time type — one source of truth. In pydantic you declare a class and get both; in zod you declare an object literal and get both. Interfaces could only ever describe.</li>
+  <li><strong><code>parse</code> for closed worlds, <code>safeParse</code> for open ones.</strong> <code>parse</code> throws <code>ZodError</code> — right when the data's shape is <em>your</em> responsibility. <code>safeParse</code> returns <code>{ success: false, error }</code> — right when the shape is <em>the world's</em> responsibility. Model output is the open world by definition. Full decision table: <a href="../reference/zod-boundary.html">the boundary cheat sheet</a>.</li>
+  <li><strong>Errors are results.</strong> A rejected tool call is not an exception — it's a <code>tool_result</code> whose content is the validation error (<code>z.prettifyError</code> makes it human- <em>and</em> model-readable). The model reads it and retries with fixed arguments. This is Anthropic's documented <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls">error-signaling pattern</a>, and it's why your loop's <code>default:</code> arm from lesson 0002 returned strings instead of throwing.</li>
+</ol>
+
+<h2><span class="secno">§3</span>The lab — two files, one retirement ceremony</h2>
+<p>As ever: bare folder, everything from the repo root. The two dependencies (<code>zod@4.5.4</code>, <code>@anthropic-ai/sdk@0.124.0</code>) were installed at the root during lesson verification — <code>pnpm add</code> will confirm rather than install.</p>
+
+<div class="task">
+<ol>
+  <li><input type="checkbox"> <strong>Create the lab folder.</strong>
+    <div class="code-block"><div class="code-title">shell — from the repository root</div><pre><code>pnpm add zod @anthropic-ai/sdk          <span class="tok-com"># already present — pnpm will say so</span>
+mkdir -p labs/0003-trust-but-validate</code></pre></div></li>
+  <li><input type="checkbox"> <strong>Create <code>labs/0003-trust-but-validate/schema-first.ts</code></strong> — the offline half. Fabricated model output, no key needed: your 0002 guards, rewritten as schemas.
+    <div class="code-block"><div class="code-title">labs/0003-trust-but-validate/schema-first.ts</div><pre><code><span class="tok-com">// Trust, but validate — your hand-rolled guards retire into zod schemas.</span>
+<span class="tok-com">// Offline: fabricated model output, no API key needed. The whole point:</span>
+<span class="tok-com">// the ~90 lines of interfaces + type guards in labs/0002 become schemas,</span>
+<span class="tok-com">// and the types fall out of the schemas.</span>
+
+<span class="tok-kw">import</span> { z } <span class="tok-kw">from</span> <span class="tok-str">"zod"</span>;
+
+<span class="tok-com">// ---------- 1. Schemas replace interfaces ----------</span>
+
+<span class="tok-kw">const</span> TextBlock = <span class="tok-typ">z</span>.<span class="tok-fn">object</span>({
+  <span class="tok-kw">type</span>: <span class="tok-typ">z</span>.<span class="tok-fn">literal</span>(<span class="tok-str">"text"</span>),
+  text: <span class="tok-typ">z</span>.<span class="tok-fn">string</span>(),
+});
+
+<span class="tok-kw">const</span> ToolUseBlock = <span class="tok-typ">z</span>.<span class="tok-fn">object</span>({
+  <span class="tok-kw">type</span>: <span class="tok-typ">z</span>.<span class="tok-fn">literal</span>(<span class="tok-str">"tool_use"</span>),
+  id: <span class="tok-typ">z</span>.<span class="tok-fn">string</span>(),
+  name: <span class="tok-typ">z</span>.<span class="tok-fn">string</span>(),
+  input: <span class="tok-typ">z</span>.<span class="tok-fn">record</span>(<span class="tok-typ">z</span>.<span class="tok-fn">string</span>(), <span class="tok-typ">z</span>.<span class="tok-fn">unknown</span>()), <span class="tok-com">// untrusted forever</span>
+});
+
+<span class="tok-com">// Same discriminated union you wrote by hand in 0001 — zod builds it.</span>
+<span class="tok-kw">const</span> ContentBlock = <span class="tok-typ">z</span>.<span class="tok-fn">discriminatedUnion</span>(<span class="tok-str">"type"</span>, [TextBlock, ToolUseBlock]);
+
+<span class="tok-com">// Envelope, checked strictly: if THIS fails, the API changed under us.</span>
+<span class="tok-kw">const</span> ModelReply = <span class="tok-typ">z</span>.<span class="tok-fn">object</span>({
+  stop_reason: <span class="tok-typ">z</span>.<span class="tok-fn">string</span>(),
+  content: <span class="tok-typ">z</span>.<span class="tok-fn">array</span>(<span class="tok-typ">z</span>.<span class="tok-fn">unknown</span>()),
+});
+
+<span class="tok-com">// The TYPE comes from the schema — one source of truth, not two.</span>
+<span class="tok-kw">type</span> <span class="tok-typ">Block</span> = <span class="tok-typ">z</span>.<span class="tok-fn">infer</span>&lt;<span class="tok-kw">typeof</span> ContentBlock&gt;;
+<span class="tok-com">// And types compose like schemas: envelope stop_reason + narrowed blocks.</span>
+<span class="tok-kw">type</span> <span class="tok-typ">Reply</span> = { stop_reason: <span class="tok-typ">z</span>.<span class="tok-fn">infer</span>&lt;<span class="tok-kw">typeof</span> ModelReply&gt;[<span class="tok-str">"stop_reason"</span>]; content: Block[] };
+
+<span class="tok-com">// ---------- 2. What dispatch requires: an args schema ----------</span>
+
+<span class="tok-kw">const</span> GuideArgs = <span class="tok-typ">z</span>.<span class="tok-fn">object</span>({
+  topic: <span class="tok-typ">z</span>.<span class="tok-fn">string</span>(),
+});
+
+<span class="tok-com">// ---------- 3. parse vs safeParse: closed world vs open world ----------</span>
+
+<span class="tok-kw">function</span> <span class="tok-fn">parseReply</span>(raw: <span class="tok-typ">unknown</span>): Reply {
+  <span class="tok-kw">const</span> reply = ModelReply.<span class="tok-fn">parse</span>(raw); <span class="tok-com">// envelope: parse() THROWS — that's a bug in OUR transport</span>
+  <span class="tok-kw">const</span> blocks = reply.content.<span class="tok-fn">flatMap</span>((b) =&gt; {
+    <span class="tok-kw">const</span> r = ContentBlock.<span class="tok-fn">safeParse</span>(b); <span class="tok-com">// blocks: safeParse — the model's output is open world</span>
+    <span class="tok-kw">return</span> r.success ? [r.data] : []; <span class="tok-com">// blocks we don't model (thinking, ...) are dropped, not trusted</span>
+  });
+  <span class="tok-kw">return</span> { stop_reason: reply.stop_reason, content: blocks };
+}
+
+<span class="tok-com">// ---------- 4. The tool + dispatch: ZodError becomes a tool_result ----------</span>
+
+<span class="tok-kw">const</span> GUIDE_ENTRIES: <span class="tok-typ">Record</span>&lt;<span class="tok-typ">string</span>, <span class="tok-typ">string</span>&gt; = {
+  towel:
+    <span class="tok-str">"About the most massively useful thing an interstellar hitchhiker can have: warmth, shade, "</span> +
+    <span class="tok-str">"a weapon, a sail. Carrying one signals to strags that you know where your towel is."</span>,
+  <span class="tok-str">"babel fish"</span>:
+    <span class="tok-str">"Small, yellow, leech-like, and probably the oddest thing in the Universe."</span>,
+  <span class="tok-str">"forty two"</span>:
+    <span class="tok-str">"The Answer to Life, the Universe and Everything. Nobody knows the Question."</span>,
+};
+
+<span class="tok-kw">function</span> <span class="tok-fn">runTool</span>(name: <span class="tok-typ">string</span>, input: <span class="tok-typ">unknown</span>): <span class="tok-typ">string</span> {
+  <span class="tok-kw">switch</span> (name) {
+    <span class="tok-kw">case</span> <span class="tok-str">"lookup_guide_entry"</span>: {
+      <span class="tok-kw">const</span> args = GuideArgs.<span class="tok-fn">safeParse</span>(input); <span class="tok-com">// input arrives as unknown — ALWAYS</span>
+      <span class="tok-kw">if</span> (!args.success) {
+        <span class="tok-com">// Not an exception — a RESULT. The model reads this and self-corrects.</span>
+        <span class="tok-kw">return</span> <span class="tok-str">`error: invalid arguments\n</span><span class="tok-str">${z.prettifyError(args.error)}`</span>;
+      }
+      <span class="tok-kw">const</span> key = args.data.topic.trim().toLowerCase(); <span class="tok-com">// args.data.topic: string — proven</span>
+      <span class="tok-kw">return</span> GUIDE_ENTRIES[key] ?? <span class="tok-str">`No Guide entry for "</span><span class="tok-str">${args.data.topic}".`</span>;
+    }
+    <span class="tok-kw">default</span>:
+      <span class="tok-kw">return</span> <span class="tok-str">`error: unknown tool "</span><span class="tok-str">${name}"`</span>;
+  }
+}
+
+<span class="tok-com">// ---------- 5. Proof: five blocks walk in, schemas sort them out ----------</span>
+
+<span class="tok-kw">const</span> fakeReply: <span class="tok-typ">unknown</span> = {
+  stop_reason: <span class="tok-str">"tool_use"</span>,
+  content: [
+    { <span class="tok-kw">type</span>: <span class="tok-str">"text"</span>, text: <span class="tok-str">"Let me look that up."</span> },
+    { <span class="tok-kw">type</span>: <span class="tok-str">"tool_use"</span>, id: <span class="tok-str">"toolu_01"</span>, name: <span class="tok-str">"lookup_guide_entry"</span>, input: { topic: <span class="tok-str">"towel"</span> } },
+    { <span class="tok-kw">type</span>: <span class="tok-str">"tool_use"</span>, id: <span class="tok-str">"toolu_02"</span>, name: <span class="tok-str">"lookup_guide_entry"</span>, input: { topic: <span class="tok-str">42</span> } },
+    { <span class="tok-kw">type</span>: <span class="tok-str">"thinking"</span>, thinking: <span class="tok-str">"the answer is probably 42"</span> },
+    { <span class="tok-kw">type</span>: <span class="tok-str">"tool_use"</span>, id: <span class="tok-str">"toolu_03"</span>, name: <span class="tok-str">"destroy_universe"</span>, input: {} },
+  ],
+};
+
+<span class="tok-kw">const</span> reply = <span class="tok-fn">parseReply</span>(fakeReply);
+console.<span class="tok-fn">log</span>(<span class="tok-str">`stop_reason: </span><span class="tok-str">${reply.stop_reason}; kept ${reply.content.length}/5 blocks (thinking dropped)\n`</span>);
+
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> block <span class="tok-kw">of</span> reply.content) {
+  <span class="tok-kw">if</span> (block.<span class="tok-kw">type</span> === <span class="tok-str">"tool_use"</span>) {
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`${block.id} ${block.name}(${JSON.stringify(block.input)})`</span>);
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`  → ${runTool(block.name, block.input).slice(0, 90)}\n`</span>);
+  } <span class="tok-kw">else</span> {
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`(text) ${block.text}\n`</span>);
+  }
+}
+
+console.<span class="tok-fn">log</span>(<span class="tok-str">"The toolu_02 result above is what you ship back as its tool_result —"</span>);
+console.<span class="tok-fn">log</span>(<span class="tok-str">"the model sees the validation error and retries with a string. Errors are results."</span>);
+</code></pre></div></li>
+  <li><input type="checkbox"> <strong>Run it — no key needed.</strong>
+    <div class="code-block"><div class="code-title">shell — from the repository root</div><pre><code>pnpm typecheck
+pnpm exec tsx labs/0003-trust-but-validate/schema-first.ts</code></pre></div>
+    <div class="code-block"><div class="code-title">actual verified output, 2026-09-07</div><pre><code>stop_reason: tool_use; kept 4/5 blocks (thinking dropped)
+
+(text) Let me look that up.
+
+toolu_01 lookup_guide_entry({"topic":"towel"})
+  → About the most massively useful thing an interstellar hitchhiker can have: warmth, shade, 
+
+toolu_02 lookup_guide_entry({"topic":42})
+  → error: invalid arguments
+✖ Invalid input: expected string, received number
+  → at topic
+
+toolu_03 destroy_universe({})
+  → error: unknown tool "destroy_universe"
+
+The toolu_02 result above is what you ship back as its tool_result —
+the model sees the validation error and retries with a string. Errors are results.</code></pre></div>
+    Count what disappeared: <code>isTextBlock</code>, <code>isToolUseBlock</code>, and every <code>typeof</code>/<code>in</code>-check — schemas do that work now, and <em>stricter</em> than before: <code>toolu_02</code> fails with the exact reason, at the exact path (<code>at topic</code>).</li>
+  <li><input type="checkbox"> <strong>Create <code>labs/0003-trust-but-validate/sdk-loop.ts</code></strong> — the live half. Same agent as 0002, on the official SDK.
+    <div class="code-block"><div class="code-title">labs/0003-trust-but-validate/sdk-loop.ts</div><pre><code><span class="tok-com">// The same agent loop as 0002, now on the official SDK.</span>
+<span class="tok-com">// The wire types arrive for free — and tool input still arrives as unknown.</span>
+<span class="tok-com">// Live: needs ANTHROPIC_API_KEY (loadEnvFile is Rafael's labs/0002 improvement).</span>
+
+<span class="tok-kw">import</span> Anthropic <span class="tok-kw">from</span> <span class="tok-str">"@anthropic-ai/sdk"</span>;
+<span class="tok-kw">import</span> { z } <span class="tok-kw">from</span> <span class="tok-str">"zod"</span>;
+
+process.<span class="tok-fn">loadEnvFile</span>(<span class="tok-str">".env"</span>); <span class="tok-com">// must run before the client reads the env</span>
+<span class="tok-kw">const</span> client = <span class="tok-kw">new</span> <span class="tok-typ">Anthropic</span>(); <span class="tok-com">// reads ANTHROPIC_API_KEY itself</span>
+
+<span class="tok-com">// ---------- 1. The tool (unchanged from 0002) ----------</span>
+
+<span class="tok-kw">const</span> GUIDE_ENTRIES: <span class="tok-typ">Record</span>&lt;<span class="tok-typ">string</span>, <span class="tok-typ">string</span>&gt; = {
+  towel:
+    <span class="tok-str">"About the most massively useful thing an interstellar hitchhiker can have: warmth, shade, "</span> +
+    <span class="tok-str">"a weapon, a sail. Carrying one signals to strags that you know where your towel is."</span>,
+  <span class="tok-str">"babel fish"</span>:
+    <span class="tok-str">"Small, yellow, leech-like, and probably the oddest thing in the Universe. Pop it in your "</span> +
+    <span class="tok-str">"ear and understand anything said in any language."</span>,
+  <span class="tok-str">"forty two"</span>:
+    <span class="tok-str">"The Answer to the Great Question of Life, the Universe and Everything. Nobody knows what "</span> +
+    <span class="tok-str">"the actual Question is."</span>,
+};
+
+<span class="tok-kw">const</span> TOOLS: <span class="tok-typ">Anthropic</span>.Tool[] = [
+  {
+    name: <span class="tok-str">"lookup_guide_entry"</span>,
+    description:
+      <span class="tok-str">"Look up an entry from the Hitchhiker's Guide to the Galaxy. Returns the entry text "</span> +
+      <span class="tok-str">"for a topic. Topic keys are short, e.g. 'towel', 'babel fish', 'forty two'."</span>,
+    input_schema: {
+      <span class="tok-kw">type</span>: <span class="tok-str">"object"</span>,
+      properties: {
+        topic: {
+          <span class="tok-kw">type</span>: <span class="tok-str">"string"</span>,
+          description: <span class="tok-str">"The Guide topic to look up, e.g. 'towel' or 'babel fish'"</span>,
+        },
+      },
+      required: [<span class="tok-str">"topic"</span>],
+    },
+  },
+];
+
+<span class="tok-com">// ---------- 2. The one guard that never retires: args at the boundary ----------</span>
+
+<span class="tok-kw">const</span> GuideArgs = <span class="tok-typ">z</span>.<span class="tok-fn">object</span>({ topic: <span class="tok-typ">z</span>.<span class="tok-fn">string</span>() });
+
+<span class="tok-com">// ---------- 3. The loop — note what is GONE from labs/0002 ----------</span>
+
+<span class="tok-kw">const</span> messages: <span class="tok-typ">Anthropic</span>.MessageParam[] = [
+  {
+    role: <span class="tok-str">"user"</span>,
+    content: <span class="tok-str">"What does the Guide say about towels? And what exactly is a Babel fish?"</span>,
+  },
+];
+
+<span class="tok-kw">const</span> MAX_HOPS = <span class="tok-str">5</span>; <span class="tok-com">// circuit breaker, as ever</span>
+<span class="tok-kw">let</span> finished = <span class="tok-kw">false</span>;
+
+<span class="tok-kw">for</span> (<span class="tok-kw">let</span> hop = <span class="tok-str">1</span>; hop &lt;= MAX_HOPS; hop++) {
+  <span class="tok-kw">const</span> reply = <span class="tok-kw">await</span> client.messages.<span class="tok-fn">create</span>({
+    model: <span class="tok-str">"claude-haiku-4-5"</span>,
+    max_tokens: <span class="tok-str">1024</span>,
+    tools: TOOLS,
+    messages,
+  });
+  <span class="tok-com">// reply is fully typed: reply.content is a union, reply.stop_reason is a union —</span>
+  <span class="tok-com">// no parseReply, no isTextBlock, no isToolUseBlock. The SDK shipped the types.</span>
+  messages.<span class="tok-fn">push</span>({ role: <span class="tok-str">"assistant"</span>, content: reply.content }); <span class="tok-com">// echo verbatim</span>
+
+  <span class="tok-kw">if</span> (reply.stop_reason !== <span class="tok-str">"tool_use"</span>) {
+    <span class="tok-kw">for</span> (<span class="tok-kw">const</span> block <span class="tok-kw">of</span> reply.content) {
+      <span class="tok-kw">if</span> (block.<span class="tok-kw">type</span> === <span class="tok-str">"text"</span>) console.<span class="tok-fn">log</span>(block.text); <span class="tok-com">// narrowed by .type, not by guards</span>
+    }
+    console.<span class="tok-fn">log</span>(
+      <span class="tok-str">`\n— finished after ${hop} hop(s); stop_reason: ${reply.stop_reason}; `</span> +
+        <span class="tok-str">`tokens in ${reply.usage.input_tokens} / out ${reply.usage.output_tokens}`</span>,
+    );
+    finished = <span class="tok-kw">true</span>;
+    <span class="tok-kw">break</span>;
+  }
+
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`hop ${hop}: model wants tools`</span>);
+  <span class="tok-kw">const</span> results: <span class="tok-typ">Anthropic</span>.ToolResultBlockParam[] = [];
+  <span class="tok-kw">for</span> (<span class="tok-kw">const</span> block <span class="tok-kw">of</span> reply.content) {
+    <span class="tok-kw">if</span> (block.<span class="tok-kw">type</span> !== <span class="tok-str">"tool_use"</span>) <span class="tok-kw">continue</span>; <span class="tok-com">// discriminated union narrows here</span>
+    <span class="tok-kw">const</span> args = GuideArgs.<span class="tok-fn">safeParse</span>(block.input); <span class="tok-com">// block.input: unknown — STILL, FOREVER</span>
+    <span class="tok-kw">const</span> content = args.success
+      ? (GUIDE_ENTRIES[args.data.topic.trim().toLowerCase()] ??
+        <span class="tok-str">`No Guide entry for "</span><span class="tok-str">${args.data.topic}".`</span>)
+      : <span class="tok-str">`error: invalid arguments\n</span><span class="tok-str">${z.prettifyError(args.error)}`</span>; <span class="tok-com">// error as result — model retries</span>
+    results.<span class="tok-fn">push</span>({ <span class="tok-kw">type</span>: <span class="tok-str">"tool_result"</span>, tool_use_id: block.id, content });
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`  ${block.id} "${content.slice(0, 48)}…"`</span>);
+  }
+  messages.<span class="tok-fn">push</span>({ role: <span class="tok-str">"user"</span>, content: results });
+}
+
+<span class="tok-kw">if</span> (!finished) console.<span class="tok-fn">warn</span>(<span class="tok-str">"Hit the hop cap — the model never stopped calling tools."</span>);
+</code></pre></div></li>
+  <li><input type="checkbox"> <strong>Typecheck, then run it live.</strong>
+    <div class="code-block"><div class="code-title">shell — from the repository root</div><pre><code>pnpm typecheck
+pnpm exec tsx labs/0003-trust-but-validate/sdk-loop.ts</code></pre></div>
+    <div class="code-block"><div class="code-title">actual verified output, 2026-09-07 — same shape as your 0002 run</div><pre><code>hop 1: model wants tools
+  toolu_0199aQCnsYc4ZyMo8cHTo2qD "About the most massively useful thing an interst…"
+  toolu_01RXhrgx2eAFktzFqEckyYSY "Small, yellow, leech-like, and probably the odde…"
+According to the Hitchhiker's Guide:
+… (the Guide's answers, from YOUR corpus)
+— finished after 2 hop(s); stop_reason: end_turn; tokens in 883 / out 163</code></pre></div>
+    Two deletions to savor: <code>parseReply</code> and both guards are <em>gone</em> — <code>reply.content</code> arrives as a discriminated union the compiler narrows for you. But look at line 2 of section 2: <code>block.input</code> is typed <strong><code>unknown</code></strong> — <em>in the official SDK, on purpose.</em> The model's arguments are the one boundary no library can close. That's your <code>GuideArgs</code> schema's permanent job. (<a href="https://github.com/anthropics/anthropic-sdk-typescript">SDK</a> · details in the <a href="../reference/zod-boundary.html">cheat sheet §5</a>.)</li>
+  <li><input type="checkbox"> <strong>Exercise A — strict mode (offline).</strong> Change <code>GuideArgs</code> to <code>z.strictObject({ topic: z.string() })</code> and add a sixth fabricated block: <code>{ type: "tool_use", id: "toolu_04", name: "lookup_guide_entry", input: { topic: "towel", secret_extra: "boo" } }</code>. Predict before running: does the extra key get stripped, or rejected? (Default zod strips unknown keys, like pydantic; <code>strictObject</code> rejects them — agent arguments are a place where either policy can be right, but you should know which one you run.)</li>
+  <li><input type="checkbox"> <strong>Exercise B — schema drift, live (the important one).</strong> Add a field to <code>GuideArgs</code> only: <code>z.object({ topic: z.string(), style: z.enum(["brief", "full"]) })</code> — and do <em>not</em> tell the tool's <code>input_schema</code> about it. Run. <strong>Predict first:</strong> will the model read the validation error and comply? Watch what actually happens — verified live 2026-09-07, the model <em>guessed</em> style values twice, burned the hops, then answered from its weights (the hallucination shape your capstone must never ship). Then fix the drift (add <code>style</code> to <code>input_schema</code> too, or drop it from <code>GuideArgs</code>) and watch the loop heal to two hops. Lesson: errors-as-results makes the loop <em>recoverable</em>, but the model skims — declaration and enforcement must agree.</li>
+  <li><input type="checkbox"> <strong>Exercise C — grow the dispatch.</strong> Add a second tool <code>guide_stats</code> — args <code>z.object({ section: z.enum(["towel", "babel fish", "forty two"]) })</code>, returns entry word counts. Add its JSON Schema to <code>TOOLS</code>, its arm to the switch, and ask the model for statistics <em>and</em> a summary in one question. Two tools, one loop, schemas each — the exact shape MCP formalizes later in the course (book ch. 22).</li>
+</ol>
+</div>
+
+<div class="callout">
+  <p class="callout-title">Stretch — generate the declaration from the schema (optional)</p>
+  <p>Exercise B's bug exists because <code>input_schema</code> (what the model sees) and <code>GuideArgs</code> (what you enforce) are two files. zod can close that gap: <a href="https://zod.dev">zod's JSON Schema conversion</a> (<code>z.toJSONSchema(Args)</code>) turns the schema into the declaration. Wire it up so <code>input_schema</code> is <em>generated</em> from <code>GuideArgs</code> — single source of truth, drift now impossible. This is exactly what agent frameworks do for you; you just did it by hand.</p>
+</div>
+
+<h2><span class="secno">§4</span>Check yourself</h2>
+<p>Retrieval, not review. One of these five is an old friend making a spaced return — first attempt is the one that counts.</p>
+
+<div class="quiz" data-quiz="lesson0003"></div>
+<script type="application/json" id="lesson0003">
+[
+  {
+    "q": "Args.safeParse(badInput) returns { success: false, error }. Args.parse(badInput) instead…",
+    "options": ["throws a ZodError", "returns null quietly", "logs and continues", "fixes the input"],
+    "answer": 0,
+    "explain": "parse throws, safeParse returns a typed result. Rule of thumb: when the shape is your responsibility (config, your own transport), throw loudly — it's a bug. When the shape is the world's (model output, user input), a thrown exception would kill the loop; safeParse turns failure into data you can route back to the model."
+  },
+  {
+    "q": "Your zod guard rejects the model's arguments mid-loop. The agent-grade move is…",
+    "options": ["ship the error back as tool_result", "crash the loop with an exception", "retry the same bad arguments again", "drop the schema and trust input"],
+    "answer": 0,
+    "explain": "The tool_result content is the model's next input — z.prettifyError output names the field and the reason, and the model corrects itself on the next hop. Crashing turns a recoverable model hiccup into an outage; retrying identical bad args is an infinite loop; dropping the schema hands untrusted JSON to your functions — the one move that is never acceptable. (Caveat from Exercise B: the model skims, so keep declared and enforced schemas in sync.)"
+  },
+  {
+    "q": "Claude never runs your TypeScript function. What it actually emits is…",
+    "options": ["JSON you dispatch", "a function pointer", "an RPC handshake", "a linked module"],
+    "answer": 0,
+    "explain": "A tool_use block is data — a name plus JSON input. Your code validates that JSON (it arrives as unknown) and dispatches it. The validate-and-dispatch layer you hand-wrote in lesson 0002 is exactly what agent frameworks and MCP formalize — which is why you wrote it by hand first."
+  },
+  {
+    "q": "With the SDK, block.type === \"tool_use\" narrows block with no guards because the content union is…",
+    "options": ["discriminated by a literal", "indexed by block order", "tagged by block id", "inferred from the JSON"],
+    "answer": 0,
+    "explain": "Same pattern you built in lesson 0001, shipped by the SDK: every member carries a literal type field, so === on the discriminator narrows the union for the compiler. You wrote that union by hand once; now you recognize it when a library hands you one."
+  },
+  {
+    "q": "The SDK types the whole wire except tool arguments — tool_use.input arrives as…",
+    "options": ["unknown, still untrusted", "any, like before", "typed by schema", "validated by SDK"],
+    "answer": 0,
+    "explain": "Verified in the SDK's own .d.ts: input: unknown — deliberately. The model's arguments are the one boundary no library can type for you, because only you know what your tool requires. That is what your Args schema is for, and why the JSON-you-dispatch question keeps coming back."
+  }
+]
+</script>
+<script src="../assets/quiz.js"></script>
+
+<h2><span class="secno">§5</span>Primary sources &amp; reading</h2>
+<div class="cite">
+<ul>
+  <li><strong>Primary (read next, ~25 min):</strong> <a href="https://zod.dev">zod docs</a> (official). Read the introduction, then the API pages for <code>object</code>, <code>discriminatedUnion</code>, <code>parse</code>/<code>safeParse</code>, and <code>z.infer</code> — everything else in today's lab is those four ideas. Then skim <a href="https://github.com/anthropics/anthropic-sdk-typescript">anthropic-sdk-typescript README</a> (official) — it is short, and you have now used its central types.</li>
+  <li><strong>From your book</strong> (Roitman 2026, <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>): ch. 18 — the agent harness, of which today's validation layer is a load-bearing part. The chapter's Python/LangChain tool definitions map one-to-one onto today's <code>GuideArgs</code> + <code>TOOLS</code> pair: same idea, translated.</li>
+  <li><strong>Error-signaling doctrine</strong> (10 min): <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls">Anthropic — Handle tool calls</a>. You implemented its pattern twice today; now read the official wording, including <code>is_error</code>.</li>
+  <li><strong>Keep open while coding:</strong> the <a href="../reference/zod-boundary.html">zod boundary cheat sheet</a> (parse-vs-safeParse table, pydantic↔zod phrasebook) and the <a href="../reference/anthropic-tool-loop.html">round-trip cheat sheet</a>. Full list: <code>RESOURCES.md</code>.</li>
+</ul>
+</div>
+
+<div class="callout note">
+  <p class="callout-title">Your teacher is on call</p>
+  <p>A <code>ZodError</code> you can't read, a narrowing that won't happen, a drift experiment that behaves differently than this write-up — <strong>ask in the chat</strong>. Exercise B in particular tends to raise questions; that's what it's for.</p>
+</div>
+
+<h2><span class="secno">§6</span>Where this goes</h2>
+<p><strong>Lesson 0004 — the corpus grows real.</strong> The Guide entries become chunks; the chunks become embeddings; &ldquo;look up <em>topic</em>&rdquo; becomes &ldquo;retrieve by <em>meaning</em>&rdquo; — the RAG module proper (book ch. 16), with your zod boundary still standing guard where the retriever's output meets the model. After that: the capstone assembles itself.</p>
+
+<div class="lesson-footer">
+  <p>Lesson 0003 of the <em>Agents &amp; RAG in TypeScript</em> course · <a href="../reference/zod-boundary.html">zod boundary cheat sheet</a> · <a href="../reference/anthropic-tool-loop.html">Round-trip cheat sheet</a> · <a href="https://zod.dev">Primary source</a> · Next: <em>the corpus grows real</em></p>
+  <div class="lesson-nav">
+    <a class="pill" href="0002-agent-loop-live.html">prev: 0002 · the agent loop, live</a>
+    <span class="pill">next: 0004 · chunking &amp; embeddings</span>
+  </div>
+</div>
+
+</body>
+</html>

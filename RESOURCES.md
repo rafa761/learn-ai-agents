@@ -31,7 +31,9 @@ Prune ruthlessly as the course progresses; a resource that goes stale comes off 
 - [TypeScript / Python Rosetta Stone (Javier Candeira, gist)](https://gist.github.com/candeira/7d7a2e8a581607eaa9a591f138593631)
   Side-by-side Python↔TS including asyncio↔Promises. Best Python-native bridge found; no official equivalent exists.
 - [zod docs](https://zod.dev)
-  The pydantic of TypeScript. Use for: runtime validation at trust boundaries (LLM outputs, API responses).
+  The pydantic of TypeScript. Use for: runtime validation at trust boundaries (LLM outputs, API responses). Lesson 0003's primary source; our [boundary cheat sheet](reference/zod-boundary.html) compresses it (parse-vs-safeParse, pydantic↔zod phrasebook).
+- [Claude SDK for TypeScript](https://github.com/anthropics/anthropic-sdk-typescript) · [official SDK docs](https://platform.claude.com/docs/en/api/sdks/typescript)
+  `@anthropic-ai/sdk` — typed Messages API client (verified live 2026-09-07: v0.124.0, TS ≥ 5.0). Note: `tool_use.input` is deliberately typed `unknown` — the args boundary stays yours. Used in lesson 0003.
 
 ### Building LLM agents (concept-first, official)
 
