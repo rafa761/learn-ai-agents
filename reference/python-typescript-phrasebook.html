@@ -194,7 +194,7 @@ call = ToolCall.model_validate(json.loads(raw))</code></pre></div>
   <tr><td><code>pyproject.toml</code></td><td><code>package.json</code> + <code>tsconfig.json</code></td><td>Deps+scripts in package.json; compiler options in tsconfig.</td></tr>
   <tr><td><code>uv.lock</code> / <code>poetry.lock</code></td><td><code>package-lock.json</code></td><td></td></tr>
   <tr><td><code>ruff</code> / <code>mypy</code> / <code>pyright</code></td><td><code>tsc --noEmit</code> + <code>biome</code> / <code>eslint</code></td><td><code>tsc</code> is mypy with no opt-out — the default posture of TS is strict.</td></tr>
-  <tr><td><code>python file.py</code></td><td><code>npx tsx file.ts</code></td><td>tsx runs TS directly; <code>tsc</code> compiles. Compile ≠ typecheck with tsx, so CI runs both.</td></tr>
+  <tr><td><code>python file.py</code></td><td><code>pnpm exec tsx file.ts</code></td><td>tsx runs TS directly; <code>tsc</code> compiles. Compile ≠ typecheck with tsx, so CI runs both. (This course: pnpm; npm's equivalent is <code>npx tsx</code>.)</td></tr>
   <tr><td><code>pytest</code></td><td><code>vitest</code></td><td>Same ergonomics, same era.</td></tr>
   <tr><td><code>python-dotenv</code></td><td><code>node --env-file=.env</code> (Node 20.6+)</td><td>Built in now; or <code>dotenv</code> package.</td></tr>
 </table>

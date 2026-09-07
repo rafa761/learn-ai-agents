@@ -35,15 +35,15 @@
 
 <div class="task">
 <ol>
-  <li><input type="checkbox"> <strong>Scaffold the lab</strong>:
-    <div class="code-block"><div class="code-title">shell — from the repository root (learn-ai-agents/)</div><pre><code>mkdir -p labs/0002-agent-loop <span class="tok-kw">&amp;&amp;</span> <span class="tok-kw">cd</span> labs/0002-agent-loop
-npm init -y
-npm pkg set <span class="tok-kw">type</span>=module          <span class="tok-com"># ESM — top-level await needs this</span>
-npm install --save-dev typescript tsx @types/node
-npx tsc --init</code></pre></div>
-    Then open <code>tsconfig.json</code> and make one edit — the 2026 (<abbr title="the native TypeScript 7 compiler">TS 7</abbr>) template writes <code>"types": []</code>, which <em>excludes</em> the Node types you just installed, so <code>process</code> and friends go unrecognized:
-    <div class="code-block"><div class="code-title">tsconfig.json — the one-line change</div><pre><code><span class="tok-str">"types"</span>: [<span class="tok-str">"node"</span>],   <span class="tok-com">// was: [] — loads @types/node (process, fetch, …)</span></code></pre></div></li>
-  <li><input type="checkbox"> <strong>Create <code>agent-loop.ts</code></strong> — the whole agent, exactly as verified running:
+  <li><input type="checkbox"> <strong>Create the lab folder — that's the entire setup.</strong> The workspace has one <code>package.json</code> and one <code>tsconfig.json</code> at the root (built in <a href="0001-python-to-typescript-agent-types.html">Lesson 0001</a>); a lab is just a folder of <code>.ts</code> files, and every command runs from the root:
+    <div class="code-block"><div class="code-title">shell — from the repository root (learn-ai-agents/)</div><pre><code>mkdir -p labs/0002-agent-loop</code></pre></div>
+    <div class="code-block"><div class="code-title">the layout, for orientation</div><pre><code>learn-ai-agents/
+├── package.json     <span class="tok-com"># one, for the whole course — pnpm, type: module, typecheck script</span>
+├── tsconfig.json    <span class="tok-com"># one — strict, nodenext, es2022, types: ["node"]</span>
+├── .env             <span class="tok-com"># keys (gitignored)</span>
+└── labs/
+    └── 0002-agent-loop/    <span class="tok-com"># ← this lab: agent-loop.ts, nothing else</span></code></pre></div></li>
+  <li><input type="checkbox"> <strong>Create <code>labs/0002-agent-loop/agent-loop.ts</code></strong> — the whole agent, exactly as verified running:
     <div class="code-block"><div class="code-title">labs/0002-agent-loop/agent-loop.ts</div><pre><code><span class="tok-com">// The agent loop, live: Claude + one tool + an append-only ledger.</span>
 
 <span class="tok-com">// ---------- 1. The tool: a tiny Guide corpus (the seed of RAG) ----------</span>
@@ -241,8 +241,8 @@ npx tsc --init</code></pre></div>
 <span class="tok-kw">if</span> (!finished) console.<span class="tok-fn">warn</span>(<span class="tok-str">"Hit the hop cap — the model never stopped calling tools."</span>);
 </code></pre></div></li>
   <li><input type="checkbox"> <strong>Typecheck, then run</strong> — both, in this order, every time:
-    <div class="code-block"><div class="code-title">shell — from labs/0002-agent-loop/ (.env is the repo-root key file from session 1)</div><pre><code>npx tsc --noEmit                                <span class="tok-com"># your mypy — must print nothing</span>
-npx tsx --env-file=../../.env agent-loop.ts     <span class="tok-com"># your pytest — runs it live</span></code></pre></div>
+    <div class="code-block"><div class="code-title">shell — from the repository root (.env lives here)</div><pre><code>pnpm typecheck                                        <span class="tok-com"># tsc --noEmit over every lab</span>
+pnpm exec tsx --env-file=.env labs/0002-agent-loop/agent-loop.ts   <span class="tok-com"># runs it live</span></code></pre></div>
     Expect this shape (the model's prose will differ; the structure won't):
     <div class="code-block"><div class="code-title">actual verified output, 2026-09-07 — note the two calls in ONE hop</div><pre><code>hop 1: model calls 2 tool(s)
   toolu_ACT4vw "About the most massively useful thing an interst…"

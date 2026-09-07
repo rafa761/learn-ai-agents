@@ -107,13 +107,23 @@ Role = <span class="tok-typ">Literal</span>[<span class="tok-str">"user"</span>,
 
 <div class="task">
 <ol>
-  <li><input type="checkbox"> <strong>Check Node.</strong> Run <code>node -v</code>. You want v20 or later (for <code>fetch</code> and <code>--env-file</code>). If missing: <a href="https://nodejs.org/en/download">nodejs.org</a> or <code>brew install node</code>.</li>
-  <li><input type="checkbox"> <strong>Scaffold the lab</strong> — this step <em>creates</em> the <code>labs/</code> folder; it doesn't exist until you run this:<br>
-    <div class="code-block"><div class="code-title">shell — from the repository root (learn-ai-agents/)</div><pre><code>mkdir -p labs/0001-agent-types <span class="tok-kw">&amp;&amp;</span> <span class="tok-kw">cd</span> labs/0001-agent-types
-npm init -y
-npm install --save-dev typescript tsx @types/node
-npx tsc --init   <span class="tok-com"># writes tsconfig.json — strict is on by default</span></code></pre></div></li>
-  <li><input type="checkbox"> <strong>Create <code>agent-types.ts</code></strong> (full file below) in that directory:
+  <li><input type="checkbox"> <strong>Check your tools.</strong> Run <code>node -v</code> (want v20 or later, for <code>fetch</code> and <code>--env-file</code>) and <code>pnpm -v</code>. If Node is missing: <a href="https://nodejs.org/en/download">nodejs.org</a>; for pnpm: <a href="https://pnpm.io/installation">pnpm.io/installation</a> or <code>corepack enable</code>.</li>
+  <li><input type="checkbox"> <strong>One-time workspace setup.</strong> The whole course runs on a <em>single</em> <code>package.json</code> and <code>tsconfig.json</code> at the repository root — every lab is just a folder of <code>.ts</code> files under <code>labs/</code>, and every command runs from the root. From the repository root (<code>learn-ai-agents/</code>):<br>
+    <div class="code-block"><div class="code-title">shell — repository root, done once</div><pre><code>pnpm init
+pnpm pkg set <span class="tok-kw">type</span>=module    <span class="tok-com"># ESM — top-level await needs this</span>
+pnpm add -D typescript tsx @types/node</code></pre></div>
+    Then create <code>tsconfig.json</code> at the root — five lines, deliberately minimal:
+    <div class="code-block"><div class="code-title">tsconfig.json — repository root</div><pre><code>{
+  <span class="tok-str">"compilerOptions"</span>: {
+    <span class="tok-str">"module"</span>: <span class="tok-str">"nodenext"</span>,   <span class="tok-com">// Node's real module rules</span>
+    <span class="tok-str">"target"</span>: <span class="tok-str">"es2022"</span>,   <span class="tok-com">// top-level await</span>
+    <span class="tok-str">"types"</span>: [<span class="tok-str">"node"</span>],     <span class="tok-com">// load @types/node (process, fetch)</span>
+    <span class="tok-str">"strict"</span>: <span class="tok-str">true</span>,         <span class="tok-com">// your mypy — not optional</span>
+    <span class="tok-str">"noEmit"</span>: <span class="tok-str">true</span>          <span class="tok-com">// tsx runs; tsc only checks</span>
+  }
+}</code></pre></div>
+    One trap worth knowing even though you're writing this file by hand: TypeScript 7's <code>tsc --init</code> template pins <code>"types": []</code>, which silently excludes the Node types you just installed — that's why <code>["node"]</code> is explicit. This config covers every lab in the course; labs never get their own <code>package.json</code> or <code>tsconfig.json</code>.</li>
+  <li><input type="checkbox"> <strong>Create <code>labs/0001-agent-types/agent-types.ts</code></strong> (full file below) — a lab is just a folder with <code>.ts</code> files; nothing to install, the root toolchain carries it:
     <div class="code-block"><div class="code-title">labs/0001-agent-types/agent-types.ts</div><pre><code><span class="tok-com">// The shapes every agent speaks — and the pattern all agent TS rests on.</span>
 
 <span class="tok-kw">type</span> <span class="tok-typ">Role</span> = <span class="tok-str">"user"</span> | <span class="tok-str">"assistant"</span>;
@@ -150,20 +160,20 @@ npx tsc --init   <span class="tok-com"># writes tsconfig.json — strict is on b
 <span class="tok-kw">for</span> (<span class="tok-kw">const</span> msg <span class="tok-kw">of</span> conversation) {
   console.<span class="tok-fn">log</span>(<span class="tok-fn">describe</span>(msg));
 }</code></pre></div></li>
-  <li><input type="checkbox"> <strong>Run it.</strong> <code>npx tsx agent-types.ts</code> — expect exactly:
+  <li><input type="checkbox"> <strong>Run it</strong>, from the repository root: <code>pnpm exec tsx labs/0001-agent-types/agent-types.ts</code> — expect exactly:
     <div class="code-block"><div class="code-title">expected output</div><pre><code>user says: What's in chapter 16 of the guide?
 assistant calls search_docs({<span class="tok-str">"query"</span>:<span class="tok-str">"chapter 16 RAG"</span>})</code></pre></div>
     That's your first TS program: typed, compiled, dispatched on a discriminated union.</li>
   <li><input type="checkbox"> <strong>Exercise A — extend the union.</strong> Add a <code>ToolResultMessage</code> interface (<code>kind: "tool_result"</code>, field <code>result: string</code>), add it to <code>AgentMessage</code>, add the case to <code>describe</code>, and append one to <code>conversation</code>. Re-run. <em>Predict the output before you run — then check.</em></li>
-  <li><input type="checkbox"> <strong>Exercise B — break it (the important one).</strong> Comment out the entire <code>case "tool_call":</code> block, then run <code>npx tsc --noEmit</code> (that's your <code>mypy</code>). Read the error: <code>Function lacks ending return statement and return type does not include 'undefined'</code>. The compiler caught an agent that silently drops tool calls. Uncomment, re-check, feel the safety net. Note: <code>tsx</code> runs without checking — <code>tsc --noEmit</code> is the step that types; both commands are your new <code>pytest</code>-adjacent reflex.</li>
+  <li><input type="checkbox"> <strong>Exercise B — break it (the important one).</strong> Comment out the entire <code>case "tool_call":</code> block, then run <code>pnpm typecheck</code> from the root (the root <code>package.json</code> aliases it to <code>tsc --noEmit</code> — your <code>mypy</code>). Read the error: <code>Function lacks ending return statement and return type does not include 'undefined'</code>. The compiler caught an agent that silently drops tool calls. Uncomment, re-check, feel the safety net. Note: <code>tsx</code> runs without checking — <code>pnpm typecheck</code> is the step that types; both commands are your new <code>pytest</code>-adjacent reflex.</li>
 </ol>
 </div>
 
 <div class="callout">
   <p class="callout-title">Stretch — a real round-trip (optional, needs a key)</p>
-  <p>If you have an <code>ANTHROPIC_API_KEY</code>, prove the channel is live with zero SDKs. Save as <code>stretch.mts</code> (the <code>.mts</code> extension forces ES modules, which top-level <code>await</code> requires) and run <code>node --env-file=.env stretch.mts</code> — no, <code>npx tsx stretch.mts</code>, since it's TypeScript:</p>
+  <p>If you have an <code>ANTHROPIC_API_KEY</code> in the root <code>.env</code>, prove the channel is live with zero SDKs. Save as <code>labs/0001-agent-types/stretch.mts</code> (<code>.mts</code> makes the module format explicit; with the root's <code>type: module</code> a plain <code>.ts</code> works too) and run it from the repository root:</p>
 </div>
-<div class="code-block"><div class="code-title">labs/0001-agent-types/stretch.mts</div><pre><code><span class="tok-kw">const</span> key = process.env.ANTHROPIC_API_KEY;
+<div class="code-block"><div class="code-title">labs/0001-agent-types/stretch.mts — run: pnpm exec tsx --env-file=.env labs/0001-agent-types/stretch.mts</div><pre><code><span class="tok-kw">const</span> key = process.env.ANTHROPIC_API_KEY;
 <span class="tok-kw">if</span> (!key) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">"set ANTHROPIC_API_KEY"</span>);   <span class="tok-com">// honest narrowing, no `!`</span>
 
 <span class="tok-kw">const</span> res = <span class="tok-kw">await</span> <span class="tok-fn">fetch</span>(<span class="tok-str">"https://api.anthropic.com/v1/messages"</span>, {
@@ -233,7 +243,7 @@ console.<span class="tok-fn">log</span>(data);</code></pre></div>
 
 <div class="callout note">
   <p class="callout-title">Your teacher is on call</p>
-  <p>Anything unclear — narrowing, tsconfig, npm, a compiler error that reads like a riddle — <strong>ask in the chat</strong>. That's what I'm for. Confusion left overnight compounds; confusion asked about compounds into understanding.</p>
+  <p>Anything unclear — narrowing, tsconfig, pnpm, a compiler error that reads like a riddle — <strong>ask in the chat</strong>. That's what I'm for. Confusion left overnight compounds; confusion asked about compounds into understanding.</p>
 </div>
 
 <h2><span class="secno">§7</span>Where this goes</h2>
