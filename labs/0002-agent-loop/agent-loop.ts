@@ -66,8 +66,18 @@ interface ToolUseBlock {
 type ContentBlock = TextBlock | ToolUseBlock;
 
 interface ModelReply {
-  stop_reason: string;
+  id: string;
+  type: string;
+  role: string;
   content: ContentBlock[];
+  model: string;
+  //   stop_details: string | null;
+  stop_reason: string;
+  //   stop_sequence: string | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+  };
 }
 
 function isTextBlock(b: unknown): b is TextBlock {
@@ -102,6 +112,22 @@ function parseReply(raw: unknown): ModelReply {
     throw new Error("response: not an object");
   }
 
+  if (!("id" in raw) || typeof raw.id !== "string") {
+    throw new Error("response: id missing or not a string");
+  }
+
+  if (!("type" in raw) || typeof raw.type !== "string") {
+    throw new Error("response: type missing or not a string");
+  }
+
+  if (!("role" in raw) || typeof raw.role !== "string") {
+    throw new Error("response: role is missing or not a string");
+  }
+
+  if (!("model" in raw) || typeof raw.model !== "string") {
+    throw new Error("response: model missing or not a string");
+  }
+
   if (!("stop_reason" in raw) || typeof raw.stop_reason !== "string") {
     throw new Error("response: stop_reason missing or not a string");
   }
@@ -110,14 +136,34 @@ function parseReply(raw: unknown): ModelReply {
     throw new Error("response: content missing or not an array");
   }
 
+  if (
+    !("usage" in raw) ||
+    raw.usage == null ||
+    typeof raw.usage !== "object" ||
+    !("input_tokens" in raw.usage) ||
+    typeof raw.usage.input_tokens !== "number" ||
+    !("output_tokens" in raw.usage) ||
+    typeof raw.usage.output_tokens !== "number"
+  ) {
+    throw new Error("usage is missing or not a object");
+  }
+
   const blocks = raw.content.filter(
     (b): b is ContentBlock => isTextBlock(b) || isToolUseBlock(b),
   );
 
   // Blocks we don't model yet (e.g. 'thinking') are dropped, not trusted.
   return {
+    id: raw.id,
+    type: raw.type,
+    role: raw.role,
+    model: raw.model,
     stop_reason: raw.stop_reason,
     content: blocks,
+    usage: {
+      input_tokens: raw.usage.input_tokens,
+      output_tokens: raw.usage.output_tokens,
+    },
   };
 }
 
@@ -134,6 +180,7 @@ type LedgerMessage =
   | { role: "user"; content: ToolResultBlock[] }; // tool results ride as user blocks
 
 // ---------- 4. Transport: one HTTP call per hop ----------
+
 async function callClaude(messages: LedgerMessage[]): Promise<ModelReply> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
@@ -214,6 +261,9 @@ for (let hop = 1; hop <= MAX_HOPS; hop++) {
     }
     console.log(
       `\n— finished after ${hop} hop(s); stop_reason: ${reply.stop_reason}`,
+    );
+    console.log(
+      `\n- Tokens used - input: ${reply.usage.input_tokens}, output: ${reply.usage.output_tokens}.`,
     );
     finished = true;
     break;
