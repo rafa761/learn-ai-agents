@@ -23,6 +23,8 @@
    - First-attempt results persist in localStorage under
      "learn-ai-agents:<quizId>" so future sessions can spot weak spots
      (retrieval practice / spaced review).
+   - Reopening a fully-answered quiz renders the review summary
+     immediately from stored first attempts, no re-answering required.
    ============================================================ */
 
 (function () {
@@ -84,6 +86,7 @@
       }
 
       var answered = 0, firstTryCorrect = 0;
+      var firstTryResults = [];
       var past = loadAttempts(quizId).firstTry || {};
 
       questions.forEach(function (q, qi) {
@@ -115,6 +118,7 @@
             var correct = isAnswer;
             saveAttempt(quizId, qi, correct);
             if (correct) firstTryCorrect++;
+            firstTryResults[qi] = correct;
             opts.querySelectorAll(".quiz-opt").forEach(function (b) { b.disabled = true; });
             if (correct) btn.classList.add("correct");
             else {
@@ -158,11 +162,29 @@
       function showScore() {
         score.classList.add("show");
         var pct = Math.round((firstTryCorrect / questions.length) * 100);
-        score.textContent =
-          "First-attempt score: " + firstTryCorrect + "/" + questions.length + " (" + pct + "%). " +
-          (pct === 100
-            ? "Flawless — but fluency fades. Revisit this quiz in a few days to check storage strength."
-            : "Anything missed is your review list — these exact questions will return, spaced, in later sessions.");
+        var missList = [];
+        questions.forEach(function (q, qi) {
+          if (firstTryResults[qi] === false) {
+            missList.push("Q" + (qi + 1) + " — correct answer: \u201C" + q.options[q.answer] + "\u201D");
+          }
+        });
+        var head = "First-attempt score: " + firstTryCorrect + "/" + questions.length + " (" + pct + "%).";
+        var tail;
+        if (missList.length === 0) {
+          tail = " Flawless — but fluency fades. Revisit this quiz in a few days to check storage strength.";
+        } else {
+          tail = " Review list: " + missList.join("; ") + ". These exact questions return, spaced, in later sessions.";
+        }
+        score.textContent = head + tail;
+      }
+
+      if (Object.keys(past).length === questions.length) {
+        answered = questions.length;
+        questions.forEach(function (q, qi) {
+          firstTryResults[qi] = !!past[String(qi)];
+          if (firstTryResults[qi]) firstTryCorrect++;
+        });
+        showScore();
       }
     });
   }

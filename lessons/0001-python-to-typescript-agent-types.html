@@ -207,10 +207,10 @@ console.<span class="tok-fn">log</span>(data);</code></pre></div>
     "explain": "Promise.all([p1, p2]) awaits an array of promises and fails fast on the first rejection — like gather without return_exceptions. The other three don't exist."
   },
   {
-    "q": "JSON.parse hands you a value typed unknown. Which move is type-safe?",
+    "q": "JSON.parse hands you a value the compiler cannot vouch for (its signature says any). The type-safe move is…",
     "options": ["narrow it first", "annotate it any", "label it string", "iterate it now"],
     "answer": 0,
-    "explain": "unknown must be narrowed before use — typeof checks, instanceof, or a zod schema. any disables the type system (banned in this course), and iterating or treating unknown as string won't compile."
+    "explain": "JSON.parse is declared to return any — the type system vouches for nothing. Park the value in unknown (const d: unknown = JSON.parse(raw)), then narrow: typeof checks, a type guard, or a zod schema. Treating it as any is '# type: ignore' forever; calling it string or iterating it won't compile from unknown — which is the point: the compiler makes you prove what the data is before touching it."
   },
   {
     "q": "After TypeScript compiles to JavaScript, your interface ToolSpec becomes…",

@@ -29,3 +29,4 @@
 
 ## Session log
 - **2026-09-07 (session 1):** Workspace bootstrapped on branch `learning/ai-agents-ts`. Created MISSION.md, RESOURCES.md (37 verified sources via librarian agent), assets (course.css, quiz.js), reference phrasebook, Lesson 0001. Quiz state keyed `learn-ai-agents:lesson0001` in localStorage.
+- **2026-09-07 (session 2):** Lesson 0001 completed — quiz 4/5 first-attempt; sole miss = Q4 (unknown/narrowing). Recorded in LR-0002; Q4 to be interleaved verbatim into lesson 0002's quiz. quiz.js upgraded: final summary now enumerates misses (Q# + correct answer) and renders instantly on reopening a completed quiz. Learner preference captured: wants miss summaries, not just scores. Lesson Q4 wording corrected (JSON.parse is declared `any`; parking in `unknown` is the learner's move).
