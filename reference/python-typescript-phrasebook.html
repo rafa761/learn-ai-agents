@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — Python → TypeScript Phrasebook</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Reference · Print me</p>
+<h1>The Python → TypeScript Phrasebook</h1>
+<p class="subtitle">Everything you already know in Python, said with a TypeScript accent. Built for a Senior Python developer learning TS by building AI agents.</p>
+
+<div class="callout note">
+  <p class="callout-title">How to use this</p>
+  <p>Find the Python idiom you're reaching for; read the TS column; copy the pattern. Do <em>not</em> read it end-to-end — it's a phrasebook, not a chapter. Lessons will link here whenever a new mapping appears.</p>
+</div>
+
+<h2>1 · Core types</h2>
+<table class="ref-table">
+  <tr><th>Python</th><th>TypeScript</th><th>Notes</th></tr>
+  <tr><td><code>str</code>, <code>int</code>, <code>float</code>, <code>bool</code></td>
+      <td><code>string</code>, <code>number</code>, <code>number</code>, <code>boolean</code></td>
+      <td>One number type. No int/float split — <code>2 === 2.0</code>.</td></tr>
+  <tr><td><code>None</code></td><td><code>null</code> (and <code>undefined</code>)</td>
+      <td>TS has two "nothing" values. <code>undefined</code> = never set; <code>null</code> = deliberately empty.</td></tr>
+  <tr><td><code>X | None</code>, <code>Optional[X]</code></td>
+      <td><code>X | null</code>, prop<code>?: X</code></td>
+      <td><code>?</code> marks optional object keys.</td></tr>
+  <tr><td><code>Union[A, B]</code> / <code>A | B</code> (3.10+)</td>
+      <td><code>A | B</code></td>
+      <td>Identical syntax since Python 3.10. You already know this.</td></tr>
+  <tr><td><code>Literal["user", "assistant"]</code></td>
+      <td><code>"user" | "assistant"</code></td>
+      <td>String literal unions — the backbone of agent message types.</td></tr>
+  <tr><td><code>Any</code></td>
+      <td><code>unknown</code> <em>(never <code>any</code>)</em></td>
+      <td><code>unknown</code> forces you to narrow before use. <code>any</code> switches the type system off.</td></tr>
+  <tr><td><code>type Alias = ...</code></td>
+      <td><code>type Alias = ...</code></td>
+      <td>Same job, same era.</td></tr>
+</table>
+
+<h2>2 · Data shapes</h2>
+<table class="ref-table">
+  <tr><th>Python</th><th>TypeScript</th><th>Notes</th></tr>
+  <tr><td><code>BaseModel</code> (pydantic)</td>
+      <td><code>interface</code> / <code>type</code> + <a href="https://zod.dev">zod</a> for runtime</td>
+      <td>TS interfaces are <em>compile-time only</em> — erased at runtime. Runtime validation is a library job; zod is the pydantic of TS.</td></tr>
+  <tr><td><code>@dataclass</code></td>
+      <td><code>class</code> or plain <code>interface</code> + object literal</td>
+      <td>Most "dataclasses" in TS are just object literals shaped by an interface.</td></tr>
+  <tr><td><code>list[str]</code></td>
+      <td><code>string[]</code> or <code>Array&lt;string&gt;</code></td>
+      <td></td></tr>
+  <tr><td><code>dict[str, int]</code></td>
+      <td><code>Record&lt;string, number&gt;</code></td>
+      <td><code>Record&lt;K, V&gt;</code> is a homogenous dict. Object literal types are for fixed keys.</td></tr>
+  <tr><td><code>tuple[int, str]</code></td>
+      <td><code>[number, string]</code></td>
+      <td>Add <code>readonly</code> for immutability.</td></tr>
+  <tr><td><code>TypedDict</code></td>
+      <td><code>interface</code> / inline <code>{ ... }</code> type</td>
+      <td>Structural typing both sides: shape matters, name doesn't.</td></tr>
+  <tr><td><code>Enum</code></td>
+      <td><code>enum</code> (rarely) — usually a union of string literals</td>
+      <td>TS idiom: <code>type Role = "user" | "assistant"</code>. No import needed, serializes for free.</td></tr>
+</table>
+
+<h2>3 · Functions</h2>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python</div><pre><code><span class="tok-kw">def</span> <span class="tok-fn">search</span>(
+    query: <span class="tok-typ">str</span>,
+    top_k: <span class="tok-typ">int</span> = <span class="tok-str">5</span>,
+) -&gt; <span class="tok-typ">list</span>[<span class="tok-typ">str</span>]:
+    ...</code></pre></div>
+<div class="code-block"><div class="code-title">typescript</div><pre><code><span class="tok-kw">function</span> <span class="tok-fn">search</span>(
+  query: <span class="tok-typ">string</span>,
+  topK = <span class="tok-str">5</span>,                      <span class="tok-com">// inferred number</span>
+): <span class="tok-typ">string</span>[] {
+  ...                        <span class="tok-com">// return type checked</span>
+}
+
+<span class="tok-com">// arrow form, the TS default:</span>
+<span class="tok-kw">const</span> <span class="tok-fn">search</span> = (query: <span class="tok-typ">string</span>, topK = <span class="tok-str">5</span>): <span class="tok-typ">string</span>[] =&gt; ...;</code></pre></div>
+</div>
+<table class="ref-table">
+  <tr><th>Python</th><th>TypeScript</th><th>Notes</th></tr>
+  <tr><td><code>*args</code> / <code>**kwargs</code></td><td>rest params <code>...args: string[]</code></td><td>Only one rest param, always last.</td></tr>
+  <tr><td><code>Callable[[str], int]</code></td><td><code>(s: string) =&gt; number</code></td><td>Function types are written inline.</td></tr>
+  <tr><td>keyword arguments</td><td>options object: <code>fn({ topK: 5, filter: "pdf" })</code></td><td>TS has no kwargs; one object parameter replaces them. You'll see this constantly in AI SDKs.</td></tr>
+  <tr><td><code>functools.partial</code></td><td>closure / <code>.bind()</code></td><td>Closures are the idiom.</td></tr>
+  <tr><td>decorators</td><td>plain higher-order functions</td><td>Same math, no <code>@</code> syntax (outside experimental / framework cases).</td></tr>
+</table>
+
+<h2>4 · Async</h2>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python</div><pre><code><span class="tok-kw">async def</span> <span class="tok-fn">ask_claude</span>(prompt: <span class="tok-typ">str</span>) -&gt; <span class="tok-typ">str</span>:
+    resp = <span class="tok-kw">await</span> client.messages.create(...)
+    <span class="tok-kw">return</span> resp.content[<span class="tok-str">0</span>].text
+
+results = <span class="tok-kw">await</span> asyncio.gather(
+    ask_claude(<span class="tok-str">"a"</span>), ask_claude(<span class="tok-str">"b"</span>),
+)</code></pre></div>
+<div class="code-block"><div class="code-title">typescript</div><pre><code><span class="tok-kw">async function</span> <span class="tok-fn">askClaude</span>(prompt: <span class="tok-typ">string</span>): <span class="tok-typ">Promise</span>&lt;<span class="tok-typ">string</span>&gt; {
+  <span class="tok-kw">const</span> resp = <span class="tok-kw">await</span> client.messages.create(...);
+  <span class="tok-kw">return</span> resp.content[<span class="tok-str">0</span>].text;
+}
+
+<span class="tok-kw">const</span> results = <span class="tok-kw">await</span> <span class="tok-typ">Promise</span>.all([
+  askClaude(<span class="tok-str">"a"</span>), askClaude(<span class="tok-str">"b"</span>),
+]);</code></pre></div>
+</div>
+<table class="ref-table">
+  <tr><th>Python</th><th>TypeScript</th><th>Notes</th></tr>
+  <tr><td><code>asyncio.gather(...)</code></td><td><code>Promise.all([...])</code></td><td>Fails fast on first rejection, like <code>gather</code> without <code>return_exceptions</code>.</td></tr>
+  <tr><td><code>Coroutine</code></td><td><code>Promise&lt;T&gt;</code></td><td>Same concept: a value that will arrive later.</td></tr>
+  <tr><td><code>asyncio.run(main())</code></td><td>top-level <code>await</code> (just write it)</td><td>No event loop to manage — the runtime has one built in (libuv).</td></tr>
+  <tr><td><code>asyncio.Semaphore</code></td><td><code>p-limit</code> package</td><td>Concurrency limiting is a small library, not stdlib.</td></tr>
+</table>
+
+<h2>5 · Errors</h2>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python</div><pre><code><span class="tok-kw">try</span>:
+    <span class="tok-kw">await</span> ask_claude(prompt)
+<span class="tok-kw">except</span> <span class="tok-typ">RateLimitError</span> <span class="tok-kw">as</span> e:
+    retry(e)
+<span class="tok-kw">except</span> <span class="tok-typ">Exception</span> <span class="tok-kw">as</span> e:
+    log(e)</code></pre></div>
+<div class="code-block"><div class="code-title">typescript</div><pre><code><span class="tok-kw">try</span> {
+  <span class="tok-kw">await</span> askClaude(prompt);
+} <span class="tok-kw">catch</span> (e) {              <span class="tok-com">// e: unknown — narrow it</span>
+  <span class="tok-kw">if</span> (e <span class="tok-kw">instanceof</span> <span class="tok-typ">Anthropic</span>.RateLimitError) retry(e);
+  <span class="tok-kw">else</span> <span class="tok-kw">if</span> (e <span class="tok-kw">instanceof</span> <span class="tok-typ">Error</span>) log(e);
+}</code></pre></div>
+</div>
+<table class="ref-table">
+  <tr><th>Python</th><th>TypeScript</th><th>Notes</th></tr>
+  <tr><td><code>raise ValueError(...)</code></td><td><code>throw new Error(...)</code></td><td></td></tr>
+  <tr><td><code>except SomeError as e</code></td><td><code>catch (e)</code> + <code>instanceof</code> narrowing</td><td>Catch clauses don't filter by type — you narrow inside.</td></tr>
+  <tr><td>custom exception hierarchy</td><td><code>class ApiError extends Error</code></td><td>Same pattern; remember to <code>extends Error</code>.</td></tr>
+</table>
+
+<h2>6 · Narrowing &amp; discriminated unions <span class="pill">the agent pattern</span></h2>
+<p>This is the one section worth memorising. Agent messages, tool calls, tool results, stream events — every agent SDK in TypeScript models them as a <strong>discriminated union</strong>: objects sharing a literal tag field (<code>kind</code>), narrowed like <code>isinstance</code> checks in a Python <code>match</code>.</p>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python — match + isinstance</div><pre><code><span class="tok-kw">def</span> <span class="tok-fn">describe</span>(msg: AgentMessage) -&gt; <span class="tok-typ">str</span>:
+    <span class="tok-kw">match</span> msg:
+        <span class="tok-kw">case</span> TextMessage(text=t):
+            <span class="tok-kw">return</span> <span class="tok-str">f"text: {t}"</span>
+        <span class="tok-kw">case</span> ToolCallMessage(tool=tool):
+            <span class="tok-kw">return</span> <span class="tok-str">f"call {tool}"</span></code></pre></div>
+<div class="code-block"><div class="code-title">typescript — switch on the tag</div><pre><code><span class="tok-kw">function</span> <span class="tok-fn">describe</span>(msg: AgentMessage): <span class="tok-typ">string</span> {
+  <span class="tok-kw">switch</span> (msg.kind) {          <span class="tok-com">// the literal tag</span>
+    <span class="tok-kw">case</span> <span class="tok-str">"text"</span>:      <span class="tok-kw">return</span> <span class="tok-str">`text: </span>${msg.text}<span class="tok-str">`</span>;
+    <span class="tok-kw">case</span> <span class="tok-str">"tool_call"</span>: <span class="tok-kw">return</span> <span class="tok-str">`call </span>${msg.tool}<span class="tok-str">`</span>;
+  }                            <span class="tok-com">// compiler enforces all cases</span>
+}</code></pre></div>
+</div>
+<table class="ref-table">
+  <tr><th>Python</th><th>TypeScript</th><th>Notes</th></tr>
+  <tr><td><code>isinstance(x, T)</code></td><td><code>x instanceof T</code> (classes) · <code>typeof x === "..."</code> (primitives) · <code>"k" in x</code> (key check)</td><td>Three narrowing tools where Python has one.</td></tr>
+  <tr><td><code>match</code> exhaustiveness</td><td><code>switch</code> + return-type annotation</td><td>Add a union member, forget a case → <em>compile error</em>, not a runtime surprise.</td></tr>
+  <tr><td><code>assert_never(x)</code></td><td><code>const _exhaustive: never = x</code></td><td>The explicit exhaustiveness guard, same idea in both languages.</td></tr>
+  <tr><td><code>TypeGuard</code> / <code>TypeIs</code></td><td><code>x is T</code> predicate: <code>function isToolCall(m: AgentMessage): m is ToolCallMessage</code></td><td>User-defined narrowing — used all over agent SDK internals.</td></tr>
+</table>
+
+<h2>7 · Runtime validation: pydantic → zod</h2>
+<p>pydantic validates <em>at runtime</em> (parse JSON → typed model or error). TS interfaces vanish at compile time — so for anything crossing a trust boundary (API responses, LLM tool-call arguments), use <a href="https://zod.dev">zod</a>:</p>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python — pydantic</div><pre><code><span class="tok-kw">class</span> <span class="tok-typ">ToolCall</span>(BaseModel):
+    tool: <span class="tok-typ">str</span>
+    args: <span class="tok-typ">dict</span>[<span class="tok-typ">str</span>, <span class="tok-typ">Any</span>]
+
+call = ToolCall.model_validate(json.loads(raw))</code></pre></div>
+<div class="code-block"><div class="code-title">typescript — zod</div><pre><code><span class="tok-kw">import</span> { z } <span class="tok-kw">from</span> <span class="tok-str">"zod"</span>;
+
+<span class="tok-kw">const</span> ToolCall = z.object({
+  tool: z.string(),
+  args: z.record(z.unknown()),
+});
+
+<span class="tok-kw">const</span> call = ToolCall.parse(JSON.parse(raw));
+<span class="tok-com">// call: { tool: string; args: Record&lt;string, unknown&gt; }</span></code></pre></div>
+</div>
+<p>zod's <code>parse</code> throws on bad input like pydantic's <code>model_validate</code>; <code>safeParse</code> returns a result object instead of throwing. Bonus: <code>z.infer&lt;typeof ToolCall&gt;</code> derives the static type from the validator — one source of truth.</p>
+
+<h2>8 · Toolchain map</h2>
+<table class="ref-table">
+  <tr><th>Python</th><th>TypeScript</th><th>Notes</th></tr>
+  <tr><td><code>pip</code> / <code>uv</code></td><td><code>npm</code> / <code>pnpm</code> / <code>bun</code></td><td><code>npm</code> ships with Node; pnpm is faster; bun runs TS natively.</td></tr>
+  <tr><td><code>venv</code> / <code>.venv</code></td><td><code>node_modules/</code> (per-project, automatic)</td><td>No activation ritual. <code>npm ci</code> ≈ <code>uv sync --frozen</code>.</td></tr>
+  <tr><td><code>pyproject.toml</code></td><td><code>package.json</code> + <code>tsconfig.json</code></td><td>Deps+scripts in package.json; compiler options in tsconfig.</td></tr>
+  <tr><td><code>uv.lock</code> / <code>poetry.lock</code></td><td><code>package-lock.json</code></td><td></td></tr>
+  <tr><td><code>ruff</code> / <code>mypy</code> / <code>pyright</code></td><td><code>tsc --noEmit</code> + <code>biome</code> / <code>eslint</code></td><td><code>tsc</code> is mypy with no opt-out — the default posture of TS is strict.</td></tr>
+  <tr><td><code>python file.py</code></td><td><code>npx tsx file.ts</code></td><td>tsx runs TS directly; <code>tsc</code> compiles. Compile ≠ typecheck with tsx, so CI runs both.</td></tr>
+  <tr><td><code>pytest</code></td><td><code>vitest</code></td><td>Same ergonomics, same era.</td></tr>
+  <tr><td><code>python-dotenv</code></td><td><code>node --env-file=.env</code> (Node 20.6+)</td><td>Built in now; or <code>dotenv</code> package.</td></tr>
+</table>
+
+<h2>9 · Mindset shifts (no syntax equivalent)</h2>
+<ul>
+  <li><strong>Structural typing everywhere.</strong> Any object with the right shape satisfies the interface — no inheritance, no <code>implements</code> required. Ducks, formally.</li>
+  <li><strong>Types are erased.</strong> After compilation there is only JavaScript. Anything you need at runtime (validation, schemas) must exist as values — hence zod.</li>
+  <li><strong>Immutability is a convention.</strong> <code>const</code> prevents rebinding, not mutation. Reach for <code>readonly</code> and spread (<code>{ ...msg, role: "assistant" }</code> ≈ <code>{**msg, "role": "assistant"}</code>) — agent loops mutate state by creating new messages, never by editing old ones.</li>
+  <li><strong>No GIL, no asyncio event loop management.</strong> Concurrency is the platform's problem; you just <code>await</code>.</li>
+</ul>
+
+<div class="lesson-footer">
+  <p class="cite">Sources: <a href="https://www.typescriptlang.org/docs/handbook/intro.html">TypeScript Handbook</a> (official) · <a href="https://zod.dev">zod docs</a> · Roitman 2026, <em>The Hitchhiker's Guide to Agentic AI</em> ch. 15–16 (Python listings, translated). Mapped in <a href="../lessons/0001-python-to-typescript-agent-types.html">Lesson 0001</a>.</p>
+</div>
+
+</body>
+</html>

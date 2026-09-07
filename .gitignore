@@ -1,0 +1,30 @@
+# oh-my-opencode runtime state (session continuation files — never commit)
+.omo/
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+out/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs & caches
+*.log
+npm-debug.log*
+.cache/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp

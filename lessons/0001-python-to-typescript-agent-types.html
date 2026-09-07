@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0001 — Your Python Already Knows TypeScript</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 0001 · ~35 minutes · Foundations track</p>
+<h1>Your Python already knows TypeScript</h1>
+<p class="subtitle">The one type-system pattern every AI agent in TypeScript rests on — and why your pydantic instincts are about to pay off.</p>
+
+<div class="callout win">
+  <p class="callout-title">Today's win</p>
+  <p>You will run your first TypeScript program: a typed <em>agent message dispatcher</em> — the exact skeleton every agent loop is built on. Then you'll break it on purpose and watch the compiler refuse. That refusal is the whole point: in agent code, a message type you forgot to handle is a production incident; in TypeScript it's a red squiggle.</p>
+</div>
+
+<h2><span class="secno">§1</span>Why this is lesson one</h2>
+<p>Your mission is agents + RAG in TypeScript. The agent ecosystem you're heading into — the <a href="https://github.com/modelcontextprotocol/typescript-sdk">MCP TypeScript SDK</a>, the <a href="https://ai-sdk.dev/docs/agents/overview">Vercel AI SDK</a> — is written in, and best served by, TypeScript. Meanwhile your textbook (Roitman 2026) teaches those same concepts in Python. So this course runs a permanent translation exercise: <strong>concepts from the book's Python, implementations in TypeScript.</strong> That makes your ten-thousand hours of Python an asset instead of a tax.</p>
+<p>You are not learning a new language from scratch. You are learning a dialect. Typed Python (pydantic, <code>|</code> unions, <code>match</code>) has quietly converged with TypeScript; the syntax moved more than the ideas did. The genuine differences fit in a <a href="../reference/python-typescript-phrasebook.html">phrasebook</a>, not a bookshelf.</p>
+
+<h2><span class="secno">§2</span>Five mappings, five minutes</h2>
+<p>Everything below is expanded with copy-paste rows in the <a href="../reference/python-typescript-phrasebook.html">Python → TypeScript phrasebook</a> — bookmark it; we'll link back to it whenever a new mapping appears.</p>
+
+<h3>1. Type annotations: same colon, no escape hatch</h3>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python</div><pre><code>name: <span class="tok-typ">str</span> = <span class="tok-str">"claude"</span>
+top_k: <span class="tok-typ">int</span> = <span class="tok-str">5</span>
+<span class="tok-com"># annotations optional, checked</span>
+<span class="tok-com"># only if you run mypy/pyright</span></code></pre></div>
+<div class="code-block"><div class="code-title">typescript</div><pre><code><span class="tok-kw">const</span> name: <span class="tok-typ">string</span> = <span class="tok-str">"claude"</span>;
+<span class="tok-kw">let</span> topK: <span class="tok-typ">number</span> = <span class="tok-str">5</span>;
+<span class="tok-com">// types checked always, by the</span>
+<span class="tok-com">// compiler — mypy is not optional</span></code></pre></div>
+</div>
+<p>Default to <code>const</code> (rebinding forbidden); reach for <code>let</code> only when you must rebind. There is no third option — <code>var</code> is archaeology.</p>
+
+<h3>2. Unions: you already speak them</h3>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python (3.10+)</div><pre><code><span class="tok-kw">def</span> <span class="tok-fn">f</span>(x: <span class="tok-typ">int</span> | <span class="tok-typ">None</span>) -&gt; <span class="tok-typ">str</span> | <span class="tok-typ">list</span>[<span class="tok-typ">str</span>]: ...
+Role = <span class="tok-typ">Literal</span>[<span class="tok-str">"user"</span>, <span class="tok-str">"assistant"</span>]</code></pre></div>
+<div class="code-block"><div class="code-title">typescript</div><pre><code><span class="tok-kw">function</span> <span class="tok-fn">f</span>(x: <span class="tok-typ">number</span> | <span class="tok-typ">null</span>): <span class="tok-typ">string</span> | <span class="tok-typ">string</span>[] { ... }
+<span class="tok-kw">type</span> <span class="tok-typ">Role</span> = <span class="tok-str">"user"</span> | <span class="tok-str">"assistant"</span>;</code></pre></div>
+</div>
+<p>Identical mental model. <code>Literal</code> becomes a plain union of strings — no import, and it serializes to JSON for free (which is why agent SDKs use it for message roles everywhere).</p>
+
+<h3>3. <code>dict[str, Any]</code> → <code>Record&lt;string, unknown&gt;</code></h3>
+<p>The <code>Any</code> habit is the one thing you must un-learn. TS has <code>any</code> too — it switches the type system off. The honest type is <code>unknown</code>: "this is something; narrow it before use." Agent code constantly ingests untrusted JSON (model output!), so this discipline <em>is</em> the job.</p>
+
+<h3>4. Async: same keywords, no event-loop management</h3>
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python</div><pre><code>results = <span class="tok-kw">await</span> asyncio.gather(
+    ask(<span class="tok-str">"a"</span>), ask(<span class="tok-str">"b"</span>),
+)</code></pre></div>
+<div class="code-block"><div class="code-title">typescript</div><pre><code><span class="tok-kw">const</span> results = <span class="tok-kw">await</span> <span class="tok-typ">Promise</span>.all([
+  ask(<span class="tok-str">"a"</span>), ask(<span class="tok-str">"b"</span>),
+]);</code></pre></div>
+</div>
+<p><code>asyncio.gather</code> → <code>Promise.all</code>. <code>Coroutine</code> → <code>Promise</code>. There is no <code>asyncio.run</code> — the runtime owns the loop. This mapping is nearly free for you.</p>
+
+<h3>5. pydantic erases — so validation is a library</h3>
+<p>TS interfaces vanish at compile time. For shapes that cross a trust boundary (API responses, tool-call arguments from a model), the TS ecosystem uses <a href="https://zod.dev">zod</a> — the pydantic of TypeScript. <code>z.object({...}).parse(raw)</code> is <code>BaseModel.model_validate(raw)</code>. Full side-by-side in the <a href="../reference/python-typescript-phrasebook.html">phrasebook §7</a>.</p>
+
+<h2><span class="secno">§3</span>The artifact: every agent is a discriminated union</h2>
+<p>Here is the load-bearing idea of this lesson. An agent conversation is a stream of messages with different shapes: plain text, tool calls, tool results, errors. Every serious TS agent SDK (MCP, Vercel AI SDK, the Anthropic SDK's streaming events) models this the same way: a <strong>discriminated union</strong> — objects sharing a literal <em>tag</em> field, here called <code>kind</code>. It is your <code>match msg:</code> + <code>isinstance</code> pattern, made compile-time-enforced.</p>
+
+<div class="side-by-side">
+<div class="code-block"><div class="code-title">python — the idea, in your dialect</div><pre><code><span class="tok-kw">class</span> <span class="tok-typ">TextMessage</span>(BaseModel):
+    role: <span class="tok-typ">Role</span>
+    kind: <span class="tok-typ">Literal</span>[<span class="tok-str">"text"</span>]
+    text: <span class="tok-typ">str</span>
+
+<span class="tok-kw">class</span> <span class="tok-typ">ToolCallMessage</span>(BaseModel):
+    role: <span class="tok-typ">Literal</span>[<span class="tok-str">"assistant"</span>]
+    kind: <span class="tok-typ">Literal</span>[<span class="tok-str">"tool_call"</span>]
+    tool: <span class="tok-typ">str</span>
+    args: <span class="tok-typ">dict</span>[<span class="tok-typ">str</span>, <span class="tok-typ">Any</span>]
+
+<span class="tok-kw">match</span> msg:
+    <span class="tok-kw">case</span> ToolCallMessage(tool=t):
+        ...</code></pre></div>
+<div class="code-block"><div class="code-title">typescript — same idea, enforced</div><pre><code><span class="tok-kw">interface</span> <span class="tok-typ">TextMessage</span> {
+  role: <span class="tok-typ">Role</span>;
+  kind: <span class="tok-str">"text"</span>;        <span class="tok-com">// literal tag</span>
+  text: <span class="tok-typ">string</span>;
+}
+
+<span class="tok-kw">interface</span> <span class="tok-typ">ToolCallMessage</span> {
+  role: <span class="tok-str">"assistant"</span>;
+  kind: <span class="tok-str">"tool_call"</span>;   <span class="tok-com">// literal tag</span>
+  tool: <span class="tok-typ">string</span>;
+  args: <span class="tok-typ">Record</span>&lt;<span class="tok-typ">string</span>, <span class="tok-typ">unknown</span>&gt;;
+}
+
+<span class="tok-kw">function</span> <span class="tok-fn">describe</span>(msg: AgentMessage) {
+  <span class="tok-kw">switch</span> (msg.kind) {   <span class="tok-com">// narrows!</span>
+    <span class="tok-kw">case</span> <span class="tok-str">"tool_call"</span>: <span class="tok-kw">return</span> msg.tool;
+  }
+}</code></pre></div>
+</div>
+<p>Inside <code>case "tool_call"</code>, TypeScript <em>knows</em> <code>msg</code> is a <code>ToolCallMessage</code> — <code>msg.tool</code> exists, <code>msg.text</code> would be a compile error. That knowledge is called <a href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html">narrowing</a>, and it's why agent code in TS reads so clean: the branching <em>is</em> the typing.</p>
+
+<h2><span class="secno">§4</span>The lab — build it, run it, break it</h2>
+<p>Do this now. Every step is copy-paste; the whole lab fits in one sitting. Work inside this repository, under <code>labs/</code>.</p>
+
+<div class="task">
+<ol>
+  <li><input type="checkbox"> <strong>Check Node.</strong> Run <code>node -v</code>. You want v20 or later (for <code>fetch</code> and <code>--env-file</code>). If missing: <a href="https://nodejs.org/en/download">nodejs.org</a> or <code>brew install node</code>.</li>
+  <li><input type="checkbox"> <strong>Scaffold the lab</strong> — this step <em>creates</em> the <code>labs/</code> folder; it doesn't exist until you run this:<br>
+    <div class="code-block"><div class="code-title">shell — from the repository root (learn-ai-agents/)</div><pre><code>mkdir -p labs/0001-agent-types <span class="tok-kw">&amp;&amp;</span> <span class="tok-kw">cd</span> labs/0001-agent-types
+npm init -y
+npm install --save-dev typescript tsx @types/node
+npx tsc --init   <span class="tok-com"># writes tsconfig.json — strict is on by default</span></code></pre></div></li>
+  <li><input type="checkbox"> <strong>Create <code>agent-types.ts</code></strong> (full file below) in that directory:
+    <div class="code-block"><div class="code-title">labs/0001-agent-types/agent-types.ts</div><pre><code><span class="tok-com">// The shapes every agent speaks — and the pattern all agent TS rests on.</span>
+
+<span class="tok-kw">type</span> <span class="tok-typ">Role</span> = <span class="tok-str">"user"</span> | <span class="tok-str">"assistant"</span>;
+
+<span class="tok-kw">interface</span> <span class="tok-typ">TextMessage</span> {
+  role: Role;
+  kind: <span class="tok-str">"text"</span>;
+  text: <span class="tok-typ">string</span>;
+}
+
+<span class="tok-kw">interface</span> <span class="tok-typ">ToolCallMessage</span> {
+  role: <span class="tok-str">"assistant"</span>;
+  kind: <span class="tok-str">"tool_call"</span>;
+  tool: <span class="tok-typ">string</span>;
+  args: <span class="tok-typ">Record</span>&lt;<span class="tok-typ">string</span>, <span class="tok-typ">unknown</span>&gt;;
+}
+
+<span class="tok-kw">type</span> <span class="tok-typ">AgentMessage</span> = TextMessage | ToolCallMessage;
+
+<span class="tok-kw">function</span> <span class="tok-fn">describe</span>(msg: AgentMessage): <span class="tok-typ">string</span> {
+  <span class="tok-kw">switch</span> (msg.kind) {
+    <span class="tok-kw">case</span> <span class="tok-str">"text"</span>:
+      <span class="tok-kw">return</span> <span class="tok-str">`</span>${msg.role}<span class="tok-str"> says: </span>${msg.text}<span class="tok-str">`</span>;
+    <span class="tok-kw">case</span> <span class="tok-str">"tool_call"</span>:
+      <span class="tok-kw">return</span> <span class="tok-str">`</span>${msg.role}<span class="tok-str"> calls </span>${msg.tool}<span class="tok-str">(</span>${<span class="tok-typ">JSON</span>.stringify(msg.args)}<span class="tok-str">)`</span>;
+  }
+}
+
+<span class="tok-kw">const</span> conversation: AgentMessage[] = [
+  { role: <span class="tok-str">"user"</span>, kind: <span class="tok-str">"text"</span>, text: <span class="tok-str">"What's in chapter 16 of the guide?"</span> },
+  { role: <span class="tok-str">"assistant"</span>, kind: <span class="tok-str">"tool_call"</span>, tool: <span class="tok-str">"search_docs"</span>, args: { query: <span class="tok-str">"chapter 16 RAG"</span> } },
+];
+
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> msg <span class="tok-kw">of</span> conversation) {
+  console.<span class="tok-fn">log</span>(<span class="tok-fn">describe</span>(msg));
+}</code></pre></div></li>
+  <li><input type="checkbox"> <strong>Run it.</strong> <code>npx tsx agent-types.ts</code> — expect exactly:
+    <div class="code-block"><div class="code-title">expected output</div><pre><code>user says: What's in chapter 16 of the guide?
+assistant calls search_docs({<span class="tok-str">"query"</span>:<span class="tok-str">"chapter 16 RAG"</span>})</code></pre></div>
+    That's your first TS program: typed, compiled, dispatched on a discriminated union.</li>
+  <li><input type="checkbox"> <strong>Exercise A — extend the union.</strong> Add a <code>ToolResultMessage</code> interface (<code>kind: "tool_result"</code>, field <code>result: string</code>), add it to <code>AgentMessage</code>, add the case to <code>describe</code>, and append one to <code>conversation</code>. Re-run. <em>Predict the output before you run — then check.</em></li>
+  <li><input type="checkbox"> <strong>Exercise B — break it (the important one).</strong> Comment out the entire <code>case "tool_call":</code> block, then run <code>npx tsc --noEmit</code> (that's your <code>mypy</code>). Read the error: <code>Function lacks ending return statement and return type does not include 'undefined'</code>. The compiler caught an agent that silently drops tool calls. Uncomment, re-check, feel the safety net. Note: <code>tsx</code> runs without checking — <code>tsc --noEmit</code> is the step that types; both commands are your new <code>pytest</code>-adjacent reflex.</li>
+</ol>
+</div>
+
+<div class="callout">
+  <p class="callout-title">Stretch — a real round-trip (optional, needs a key)</p>
+  <p>If you have an <code>ANTHROPIC_API_KEY</code>, prove the channel is live with zero SDKs. Save as <code>stretch.mts</code> (the <code>.mts</code> extension forces ES modules, which top-level <code>await</code> requires) and run <code>node --env-file=.env stretch.mts</code> — no, <code>npx tsx stretch.mts</code>, since it's TypeScript:</p>
+</div>
+<div class="code-block"><div class="code-title">labs/0001-agent-types/stretch.mts</div><pre><code><span class="tok-kw">const</span> key = process.env.ANTHROPIC_API_KEY;
+<span class="tok-kw">if</span> (!key) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">"set ANTHROPIC_API_KEY"</span>);   <span class="tok-com">// honest narrowing, no `!`</span>
+
+<span class="tok-kw">const</span> res = <span class="tok-kw">await</span> <span class="tok-fn">fetch</span>(<span class="tok-str">"https://api.anthropic.com/v1/messages"</span>, {
+  method: <span class="tok-str">"POST"</span>,
+  headers: {
+    <span class="tok-str">"x-api-key"</span>: key,
+    <span class="tok-str">"anthropic-version"</span>: <span class="tok-str">"2023-06-01"</span>,
+    <span class="tok-str">"content-type"</span>: <span class="tok-str">"application/json"</span>,
+  },
+  body: <span class="tok-typ">JSON</span>.<span class="tok-fn">stringify</span>({
+    model: <span class="tok-str">"claude-sonnet-4-5"</span>,      <span class="tok-com">// or whatever your Console lists</span>
+    max_tokens: <span class="tok-str">64</span>,
+    messages: [{ role: <span class="tok-str">"user"</span>, content: <span class="tok-str">"Reply with exactly: agent channel open"</span> }],
+  }),
+});
+<span class="tok-kw">const</span> data: <span class="tok-typ">unknown</span> = <span class="tok-kw">await</span> res.json();  <span class="tok-com">// unknown — we haven't validated it yet</span>
+console.<span class="tok-fn">log</span>(data);</code></pre></div>
+
+<h2><span class="secno">§5</span>Check yourself</h2>
+<p>Retrieval, not review: answer from memory before looking back. First attempt is the one that counts — results are saved so the questions you miss return in later sessions.</p>
+
+<div class="quiz" data-quiz="lesson0001"></div>
+<script type="application/json" id="lesson0001">
+[
+  {
+    "q": "A pydantic BaseModel describes the shape of a message. The TypeScript construct doing that compile-time job is…",
+    "options": ["an interface", "a decorator", "a namespace", "a subclass"],
+    "answer": 0,
+    "explain": "Interfaces describe shape and are erased at runtime — runtime validation is zod's job (§2.5). Decorators are Python-side sugar here; namespaces group names; subclassing is inheritance, not shape description — TS is structural, not nominal."
+  },
+  {
+    "q": "You have msg: TextMessage | ToolCallMessage and run if (msg.kind === \"tool_call\"). Inside that block, msg is…",
+    "options": ["narrowed to ToolCall", "narrowed to Text", "still both members", "unknown, must recheck"],
+    "answer": 0,
+    "explain": "Checking the literal tag narrows the union — inside the branch, TS discards TextMessage, so msg.tool exists and msg.text is a compile error. This is narrowing: the branch IS the typing."
+  },
+  {
+    "q": "Python has asyncio.gather for awaiting many coroutines at once. The TypeScript tool with that job is…",
+    "options": ["Promise.all", "async.every", "await.group", "Promise.join"],
+    "answer": 0,
+    "explain": "Promise.all([p1, p2]) awaits an array of promises and fails fast on the first rejection — like gather without return_exceptions. The other three don't exist."
+  },
+  {
+    "q": "JSON.parse hands you a value typed unknown. Which move is type-safe?",
+    "options": ["narrow it first", "annotate it any", "label it string", "iterate it now"],
+    "answer": 0,
+    "explain": "unknown must be narrowed before use — typeof checks, instanceof, or a zod schema. any disables the type system (banned in this course), and iterating or treating unknown as string won't compile."
+  },
+  {
+    "q": "After TypeScript compiles to JavaScript, your interface ToolSpec becomes…",
+    "options": ["nothing, types erase", "a class instance", "a validator object", "a JSON-Schema doc"],
+    "answer": 0,
+    "explain": "Types are erased — only values survive to runtime. That's why runtime validation (zod, JSON Schema) exists as a separate layer, and why SDKs ship both static types and parsers."
+  }
+]
+</script>
+<script src="../assets/quiz.js"></script>
+
+<h2><span class="secno">§6</span>Primary sources &amp; reading</h2>
+<div class="cite">
+<ul>
+  <li><strong>Primary (read next, ~20 min):</strong> <a href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html">TypeScript Handbook — Narrowing</a> (official). The single page that makes agent code in TS legible. Everything else in the Handbook can wait for when a lesson needs it.</li>
+  <li><strong>From your book</strong> (Roitman 2026, <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>): skim <strong>ch. 15 §§15.1–15.2</strong> (Introduction to Agentic AI) — vocabulary you largely hold from the Claude Architect cert; we cite it as the course's shared glossary. Your local copy: <code>~/Documents/Livros/AI engineering/</code>.</li>
+  <li><strong>Keep open while coding:</strong> the <a href="../reference/python-typescript-phrasebook.html">Python → TypeScript phrasebook</a> (this course's most-revisited document). Full curated list: <code>RESOURCES.md</code>.</li>
+</ul>
+</div>
+
+<div class="callout note">
+  <p class="callout-title">Your teacher is on call</p>
+  <p>Anything unclear — narrowing, tsconfig, npm, a compiler error that reads like a riddle — <strong>ask in the chat</strong>. That's what I'm for. Confusion left overnight compounds; confusion asked about compounds into understanding.</p>
+</div>
+
+<h2><span class="secno">§7</span>Where this goes</h2>
+<p><strong>Lesson 0002 — The agent loop, live:</strong> the same discriminated union, but the model is real — your first tool-calling round-trip with Claude from TypeScript, tools defined as typed functions. After that: memory and the harness (book ch. 18), then RAG (book ch. 16) — chunking, embeddings, retrieval — built in TypeScript against a corpus you care about.</p>
+
+<div class="lesson-footer">
+  <p>Lesson 0001 of the <em>Agents &amp; RAG in TypeScript</em> course · <a href="../reference/python-typescript-phrasebook.html">Phrasebook</a> · <a href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html">Primary source</a> · Next: <em>The agent loop, live</em></p>
+  <div class="lesson-nav">
+    <span class="pill">no previous lesson</span>
+    <span class="pill">next: 0002 · the agent loop, live</span>
+  </div>
+</div>
+
+</body>
+</html>
