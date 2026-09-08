@@ -1,5 +1,5 @@
 allowBuilds:
-  esbuild: true
-  onnxruntime-node: true
-  protobufjs: true
-  sharp: true
+  esbuild: true # local-only, real perf win
+  onnxruntime-node: false # 316 MB CUDA download I cannot use on my lenovo Laptop
+  protobufjs: false # no-op under pnpm
+  sharp: false # prebuilt binary already works
