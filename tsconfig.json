@@ -6,6 +6,7 @@
       "node"
     ],
     "strict": true,
+    "skipLibCheck": true,
     "noEmit": true
   }
 }

@@ -251,6 +251,19 @@ table.ref-table {
   display: none;
 }
 .quiz .quiz-score.show { display: block; }
+.quiz .quiz-retake {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 0.25rem 0.6rem;
+  margin-left: 0.4rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.quiz .quiz-retake:hover { border-color: var(--accent); color: var(--accent-deep); }
 
 /* ---------- footer / nav ---------- */
 

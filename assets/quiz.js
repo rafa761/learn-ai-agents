@@ -23,9 +23,13 @@
    - First-attempt results persist in localStorage under
      "learn-ai-agents:<quizId>" so future sessions can spot weak spots
      (retrieval practice / spaced review).
-   - Reopening a fully-answered quiz renders the review summary
-     immediately from stored first attempts, no re-answering required.
-   ============================================================ */
+    - Reopening a fully-answered quiz renders the review summary
+      immediately from stored first attempts, no re-answering required.
+    - The summary carries a "Retake" button: it clears the stored
+      attempts for that quiz and re-renders it fresh — the sanctioned
+      way to re-measure storage strength days later (the original
+      first-attempt record lives on in the course session log).
+    ============================================================ */
 
 (function () {
   "use strict";
@@ -70,124 +74,145 @@
   }
 
   function init() {
-    var quizzes = document.querySelectorAll(".quiz[data-quiz]");
-    quizzes.forEach(function (mount) {
-      var quizId = mount.getAttribute("data-quiz");
-      var dataEl = document.getElementById(quizId);
-      if (!dataEl) {
-        mount.innerHTML = '<p class="quiz-status">quiz data missing: #' + quizId + "</p>";
-        return;
-      }
-      var questions;
-      try { questions = JSON.parse(dataEl.textContent); }
-      catch (e) {
-        mount.innerHTML = '<p class="quiz-status">quiz data invalid: #' + quizId + "</p>";
-        return;
-      }
-
-      var answered = 0, firstTryCorrect = 0;
-      var firstTryResults = [];
-      var past = loadAttempts(quizId).firstTry || {};
-
-      questions.forEach(function (q, qi) {
-        var field = document.createElement("div");
-        field.className = "quiz-item";
-
-        var qEl = document.createElement("p");
-        qEl.className = "quiz-question";
-        qEl.innerHTML = '<span class="quiz-qno">Q' + (qi + 1) + "</span>";
-        qEl.appendChild(document.createTextNode(q.q));
-        field.appendChild(qEl);
-
-        var opts = document.createElement("div");
-        opts.className = "quiz-options";
-        var shuffled = stableShuffle(q.options, hashString(quizId + ":" + qi));
-        var picked = false;
-
-        shuffled.forEach(function (entry) {
-          var btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "quiz-opt";
-          btn.textContent = entry.item;
-          var isAnswer = entry.i === q.answer;
-
-          btn.addEventListener("click", function () {
-            if (picked) return;
-            picked = true;
-            answered++;
-            var correct = isAnswer;
-            saveAttempt(quizId, qi, correct);
-            if (correct) firstTryCorrect++;
-            firstTryResults[qi] = correct;
-            opts.querySelectorAll(".quiz-opt").forEach(function (b) { b.disabled = true; });
-            if (correct) btn.classList.add("correct");
-            else {
-              btn.classList.add("incorrect");
-              opts.querySelectorAll(".quiz-opt").forEach(function (b) {
-                if (b.textContent === q.options[q.answer]) b.classList.add("correct");
-              });
-            }
-            var ex = field.querySelector(".quiz-explain");
-            if (ex) ex.classList.add("show");
-            var st = field.querySelector(".quiz-status");
-            if (st) {
-              st.textContent = correct
-                ? "First attempt: correct."
-                : "First attempt: incorrect — the highlighted option is right. Re-read the explanation, then continue.";
-            }
-            if (answered === questions.length) showScore();
-          });
-          opts.appendChild(btn);
-        });
-
-        field.appendChild(opts);
-
-        var ex = document.createElement("p");
-        ex.className = "quiz-explain";
-        ex.textContent = q.explain;
-        field.appendChild(ex);
-
-        var st = document.createElement("p");
-        st.className = "quiz-status";
-        if (String(qi) in past) st.textContent = "Previous session first-try: " + (past[String(qi)] ? "correct" : "incorrect") + ".";
-        field.appendChild(st);
-
-        mount.appendChild(field);
-      });
-
-      var score = document.createElement("p");
-      score.className = "quiz-score";
-      mount.appendChild(score);
-
-      function showScore() {
-        score.classList.add("show");
-        var pct = Math.round((firstTryCorrect / questions.length) * 100);
-        var missList = [];
-        questions.forEach(function (q, qi) {
-          if (firstTryResults[qi] === false) {
-            missList.push("Q" + (qi + 1) + " — correct answer: \u201C" + q.options[q.answer] + "\u201D");
-          }
-        });
-        var head = "First-attempt score: " + firstTryCorrect + "/" + questions.length + " (" + pct + "%).";
-        var tail;
-        if (missList.length === 0) {
-          tail = " Flawless — but fluency fades. Revisit this quiz in a few days to check storage strength.";
-        } else {
-          tail = " Review list: " + missList.join("; ") + ". These exact questions return, spaced, in later sessions.";
-        }
-        score.textContent = head + tail;
-      }
-
-      if (Object.keys(past).length === questions.length) {
-        answered = questions.length;
-        questions.forEach(function (q, qi) {
-          firstTryResults[qi] = !!past[String(qi)];
-          if (firstTryResults[qi]) firstTryCorrect++;
-        });
-        showScore();
-      }
+    document.querySelectorAll(".quiz[data-quiz]").forEach(function (mount) {
+      buildQuiz(mount);
     });
   }
+
+  function buildQuiz(mount) {
+    var quizId = mount.getAttribute("data-quiz");
+    var dataEl = document.getElementById(quizId);
+    if (!dataEl) {
+      mount.innerHTML = '<p class="quiz-status">quiz data missing: #' + quizId + "</p>";
+      return;
+    }
+    var questions;
+    try { questions = JSON.parse(dataEl.textContent); }
+    catch (e) {
+      mount.innerHTML = '<p class="quiz-status">quiz data invalid: #' + quizId + "</p>";
+      return;
+    }
+
+    var answered = 0, firstTryCorrect = 0;
+    var firstTryResults = [];
+    var past = loadAttempts(quizId).firstTry || {};
+
+    questions.forEach(function (q, qi) {
+      var field = document.createElement("div");
+      field.className = "quiz-item";
+
+      var qEl = document.createElement("p");
+      qEl.className = "quiz-question";
+      qEl.innerHTML = '<span class="quiz-qno">Q' + (qi + 1) + "</span>";
+      qEl.appendChild(document.createTextNode(q.q));
+      field.appendChild(qEl);
+
+      var opts = document.createElement("div");
+      opts.className = "quiz-options";
+      var shuffled = stableShuffle(q.options, hashString(quizId + ":" + qi));
+      var picked = false;
+
+      shuffled.forEach(function (entry) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "quiz-opt";
+        btn.textContent = entry.item;
+        var isAnswer = entry.i === q.answer;
+
+        btn.addEventListener("click", function () {
+          if (picked) return;
+          picked = true;
+          answered++;
+          var correct = isAnswer;
+          saveAttempt(quizId, qi, correct);
+          if (correct) firstTryCorrect++;
+          firstTryResults[qi] = correct;
+          opts.querySelectorAll(".quiz-opt").forEach(function (b) { b.disabled = true; });
+          if (correct) btn.classList.add("correct");
+          else {
+            btn.classList.add("incorrect");
+            opts.querySelectorAll(".quiz-opt").forEach(function (b) {
+              if (b.textContent === q.options[q.answer]) b.classList.add("correct");
+            });
+          }
+          var ex = field.querySelector(".quiz-explain");
+          if (ex) ex.classList.add("show");
+          var st = field.querySelector(".quiz-status");
+          if (st) {
+            st.textContent = correct
+              ? "First attempt: correct."
+              : "First attempt: incorrect — the highlighted option is right. Re-read the explanation, then continue.";
+          }
+          if (answered === questions.length) showScore();
+        });
+        opts.appendChild(btn);
+      });
+
+      field.appendChild(opts);
+
+      var ex = document.createElement("p");
+      ex.className = "quiz-explain";
+      ex.textContent = q.explain;
+      field.appendChild(ex);
+
+      var st = document.createElement("p");
+      st.className = "quiz-status";
+      if (String(qi) in past) st.textContent = "Previous session first-try: " + (past[String(qi)] ? "correct" : "incorrect") + ".";
+      field.appendChild(st);
+
+      mount.appendChild(field);
+    });
+
+    var score = document.createElement("p");
+    score.className = "quiz-score";
+    mount.appendChild(score);
+
+    function showScore() {
+      score.classList.add("show");
+      var pct = Math.round((firstTryCorrect / questions.length) * 100);
+      var missList = [];
+      questions.forEach(function (q, qi) {
+        if (firstTryResults[qi] === false) {
+          missList.push("Q" + (qi + 1) + " — correct answer: \u201C" + q.options[q.answer] + "\u201D");
+        }
+      });
+      var head = "First-attempt score: " + firstTryCorrect + "/" + questions.length + " (" + pct + "%).";
+      var tail;
+      if (missList.length === 0) {
+        tail = " Flawless — but fluency fades. Revisit this quiz in a few days to check storage strength.";
+      } else {
+        tail = " Review list: " + missList.join("; ") + ". These exact questions return, spaced, in later sessions.";
+      }
+      score.textContent = head + tail;
+      score.appendChild(document.createTextNode(" "));
+      var retake = document.createElement("button");
+      retake.type = "button";
+      retake.className = "quiz-retake";
+      retake.textContent = "Retake from memory";
+      retake.title = "Clears the recorded attempts for this quiz and starts it fresh — for storage-strength checks days later.";
+      retake.addEventListener("click", function () {
+        try { localStorage.removeItem(storageKey(quizId)); } catch (e) {}
+        mount.innerHTML = "";
+        buildQuiz(mount);
+        mount.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      score.appendChild(retake);
+    }
+
+    var reopened = Object.keys(past).length === questions.length;
+    if (reopened) {
+      answered = questions.length;
+      questions.forEach(function (q, qi) {
+        firstTryResults[qi] = !!past[String(qi)];
+        if (firstTryResults[qi]) firstTryCorrect++;
+      });
+      showScore();
+      // score above is rendered from stored attempts; the click handlers'
+      // "answered === length" guard can never fire again, so any click here
+      // would show feedback that never reaches the score — disable instead
+      mount.querySelectorAll(".quiz-opt").forEach(function (b) { b.disabled = true; });
+    }
+}
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
