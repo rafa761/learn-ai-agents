@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0005 — Grounded answers</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 0005 · ~45 minutes · RAG track · book ch. 16 §16.2.4</p>
+<h1>Grounded answers</h1>
+<p class="subtitle">Yesterday you built a retriever that ranks the right chunk first. Today the loop closes: the chunks ride into the prompt, a model answers <em>from them and only them</em>, every claim carries a <code>[Doc N]</code> you can check — and when the answer isn't in the corpus, the system says so. That last behaviour is not a failure mode. It is the entire point.</p>
+
+<div class="callout win">
+  <p class="callout-title">Today's win</p>
+  <p>One file, <code>rag-qa.ts</code>: retrieval from lesson 0004, a zod-checked seam from lesson 0003, a live Claude call from the SDK — and a two-question run where the on-corpus question comes back <strong>citing the book</strong> and the off-corpus question comes back <strong>refusing honestly</strong>. Full RAG, end to end, on your machine.</p>
+</div>
+
+<h2><span class="secno">§1</span>Why generation is the dangerous half</h2>
+<p>Here is the uncomfortable fact about the model at the end of your pipeline: <em>it does not need your retrieved chunks to answer.</em> Ask it about chunk overlap and it will happily produce a fluent paragraph from its training weights — stale at best, invented at worst. The retrieval layer you built solves <em>finding</em> the right text; nothing about it forces the model to <em>use</em> that text and nothing else. Grounding is the discipline that closes that gap, and it lives almost entirely in the prompt (book §16.2.4).</p>
+<p>This is also where your last quiz miss pays off. You distinguished (or now can) three limits: the <strong>embedding window</strong> shapes each chunk; the <strong>generator's input budget</strong> caps how many chunks fit in the prompt; the <strong>generator's output limit</strong> caps the answer's length and has nothing to do with chunks. Today the middle one becomes code: you choose <code>k</code>, you send <code>k</code> chunks, the prompt pays for them.</p>
+
+<h2><span class="secno">§2</span>Three ideas, each with a why</h2>
+<p><strong>1. The ONLY-context instruction.</strong> The system prompt tells the model: answer <em>using only the provided context documents</em>, and <em>say so explicitly</em> when they don't contain enough. Why both halves? The first blocks the model's default behaviour (answering from weights — its training makes this its reflex, not its fault). The second redefines refusal as a <em>correct answer</em>: &ldquo;the context does not contain this&rdquo; is exactly what a trustworthy system says when it's true. Without that clause, the model faces a false choice between ignoring you and inventing.</p>
+<p><strong>2. The [Doc N] citation.</strong> Each retrieved chunk enters the prompt numbered — <code>[Doc 1] (score 0.541) …text…</code> — and the model must mark claims with the Doc it used. Why: it converts a fluent answer into an <em>auditable</em> one. You can check any sentence against chunk 1 in seconds. In production this is the difference between &ldquo;the AI said&rdquo; and &ldquo;the manual says&rdquo;.</p>
+<p><strong>3. Top-k, never a score threshold.</strong> You keep the best <code>k=3</code> chunks — you do <em>not</em> keep &ldquo;everything scoring above 0.4&rdquo;. Why, in plain terms: a cosine score is not a property of a text. It's a property of a <em>pair</em> — this query against this chunk, measured by this model. Your two live queries from lesson 0004 scored 0.54 for a great match and 0.17 for no match; a broader query can max out at 0.35 and a narrow one never dip below 0.5. There is no universal line where a score becomes &ldquo;relevant&rdquo; — a hardcoded threshold is a bug that happens to work on the queries you tested. The <em>ranking</em> is the dependable part. So: take the best k, and let the say-so-if-insufficient instruction decide whether what came back is enough. The generator is your threshold — and it's a better one, because it reads the text, not the number.</p>
+<p>Tactics if you want depth beyond the book chapter: <a href="https://www.anthropic.com/engineering/contextual-retrieval">Anthropic — Contextual Retrieval</a> (what production RAG does when plain chunk-and-embed isn't enough — it's the natural sequel to this lesson) and the <a href="https://www.pinecone.io/learn/retrieval-augmented-generation/">Pinecone RAG walkthrough</a> for the whole pipeline in one picture. Keep the <a href="../reference/rag-answer-loop.html">grounded-loop cheat sheet</a> open while coding.</p>
+
+<h2><span class="secno">§3</span>The lab — the capstone, in miniature</h2>
+
+<div class="task">
+<p class="task-title">Lab — rag-qa.ts: retrieve → check → ground → generate</p>
+<div class="code-block"><div class="code-title">shell — from the repository root</div><pre><code>mkdir -p labs/0005-grounded-answers</code></pre></div>
+<div class="code-block"><div class="code-title">labs/0005-grounded-answers/rag-qa.ts</div><pre><code><span class="tok-com">// The G arrives. Retrieval (lesson 0004) meets generation (lessons 0002–0003):</span>
+<span class="tok-com">// chunks -> zod-checked seam -> grounded prompt with [Doc N] citations -> Claude.</span>
+<span class="tok-com">// This file IS the capstone in miniature — at four paragraphs instead of 636 pages,</span>
+<span class="tok-com">// the only difference between here and there is scale.</span>
+<span class="tok-com">// Live: needs ANTHROPIC_API_KEY. Two haiku-class calls, pennies.</span>
+
+<span class="tok-kw">import</span> Anthropic <span class="tok-kw">from</span> <span class="tok-str">"@anthropic-ai/sdk"</span>;
+<span class="tok-kw">import</span> { pipeline } <span class="tok-kw">from</span> <span class="tok-str">"@huggingface/transformers"</span>;
+<span class="tok-kw">import</span> { z } <span class="tok-kw">from</span> <span class="tok-str">"zod"</span>;
+
+process.<span class="tok-fn">loadEnvFile</span>(<span class="tok-str">".env"</span>); <span class="tok-com">// must run before the client reads the env</span>
+<span class="tok-kw">const</span> client = <span class="tok-kw">new</span> <span class="tok-typ">Anthropic</span>(); <span class="tok-com">// reads ANTHROPIC_API_KEY itself</span>
+
+<span class="tok-com">// ---------- retrieval layer: lesson 0004, third typing — retrieval is remembering ----------</span>
+
+<span class="tok-kw">const</span> EXCERPT = [
+  <span class="tok-str">"Retrieval-Augmented Generation equips large language models with a dynamic, updatable external memory, enabling accurate, grounded, and verifiable responses across knowledge-intensive tasks."</span>,
+  <span class="tok-str">"Large language models store knowledge parametrically, compressed into billions of weights during training. This creates three fundamental limitations: hallucination, where models confidently generate plausible but incorrect statements beyond their reliable knowledge boundary; knowledge staleness, because training data has a cutoff date; and domain specificity, since general-purpose models lack deep knowledge of proprietary codebases and documents."</span>,
+  <span class="tok-str">"Chunking is the process of splitting documents into segments that are small enough to fit in an embedding model's context window, semantically coherent, and containing enough context to be useful when retrieved in isolation."</span>,
+  <span class="tok-str">"The simplest strategy splits every W tokens with an overlap of O tokens between consecutive chunks. Overlap preserves context across boundaries: a sentence cut at a chunk edge still appears whole inside its neighbour chunk, so retrieval never loses a thought merely because a window ended mid-thought."</span>,
+].<span class="tok-fn">join</span>(<span class="tok-str">"\n\n"</span>);
+
+<span class="tok-kw">function</span> <span class="tok-fn">chunkTexts</span>(text: <span class="tok-typ">string</span>, size: <span class="tok-typ">number</span>, overlap: <span class="tok-typ">number</span>): <span class="tok-typ">string</span>[] {
+  <span class="tok-kw">if</span> (overlap &gt;= size) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`overlap (${overlap}) must be smaller than size (${size})`</span>);
+  <span class="tok-kw">const</span> words = text.<span class="tok-fn">split</span>(<span class="tok-str">/\s+/</span>).<span class="tok-fn">filter</span>(Boolean);
+  <span class="tok-kw">const</span> step = size - overlap;
+  <span class="tok-kw">const</span> out: <span class="tok-typ">string</span>[] = [];
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> start = 0; start &lt; words.length; start += step) {
+    <span class="tok-kw">const</span> window = words.<span class="tok-fn">slice</span>(start, start + size);
+    <span class="tok-kw">if</span> (window.length === 0) <span class="tok-kw">break</span>;
+    out.<span class="tok-fn">push</span>(window.<span class="tok-fn">join</span>(<span class="tok-str">" "</span>));
+    <span class="tok-kw">if</span> (start + size &gt;= words.length) <span class="tok-kw">break</span>;
+  }
+  <span class="tok-kw">return</span> out;
+}
+
+<span class="tok-kw">function</span> <span class="tok-fn">cosine</span>(a: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;, b: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;): <span class="tok-typ">number</span> {
+  <span class="tok-kw">let</span> dot = 0;
+  <span class="tok-kw">let</span> normA = 0;
+  <span class="tok-kw">let</span> normB = 0;
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> i = 0; i &lt; a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  <span class="tok-kw">return</span> dot / (Math.<span class="tok-fn">sqrt</span>(normA) * Math.<span class="tok-fn">sqrt</span>(normB));
+}
+
+<span class="tok-kw">const</span> embedder = <span class="tok-kw">await</span> <span class="tok-fn">pipeline</span>(<span class="tok-str">"feature-extraction"</span>, <span class="tok-str">"Xenova/all-MiniLM-L6-v2"</span>);
+
+<span class="tok-kw">async function</span> <span class="tok-fn">embed</span>(text: <span class="tok-typ">string</span>): <span class="tok-typ">Promise</span>&lt;<span class="tok-typ">Float32Array</span>&gt; {
+  <span class="tok-kw">const</span> tensor = <span class="tok-kw">await</span> <span class="tok-fn">embedder</span>(text, { pooling: <span class="tok-str">"mean"</span>, normalize: <span class="tok-str">true</span> });
+  <span class="tok-kw">return</span> tensor.data <span class="tok-kw">as</span> <span class="tok-typ">Float32Array</span>;
+}
+
+<span class="tok-kw">const</span> chunks = <span class="tok-fn">chunkTexts</span>(EXCERPT, 60, 12);
+<span class="tok-kw">const</span> chunkVectors = <span class="tok-kw">await</span> <span class="tok-typ">Promise</span>.<span class="tok-fn">all</span>(chunks.<span class="tok-fn">map</span>(embed));
+
+<span class="tok-com">// top-k, not top-threshold: cosine scores have no absolute meaning across queries or</span>
+<span class="tok-com">// models — only the RANKING is dependable, so "best 3" is a knob, "score &gt; 0.4" is a bug.</span>
+<span class="tok-kw">const</span> TOP_K = 3;
+
+<span class="tok-kw">async function</span> <span class="tok-fn">retrieve</span>(query: <span class="tok-typ">string</span>): <span class="tok-typ">Promise</span>&lt;{ text: <span class="tok-typ">string</span>; score: <span class="tok-typ">number</span>; index: <span class="tok-typ">number</span> }[]&gt; {
+  <span class="tok-kw">const</span> queryVector = <span class="tok-kw">await</span> <span class="tok-fn">embed</span>(query);
+  <span class="tok-kw">return</span> chunks
+    .<span class="tok-fn">map</span>((text, index) =&gt; ({ text, score: <span class="tok-fn">cosine</span>(queryVector, chunkVectors[index]), index }))
+    .<span class="tok-fn">sort</span>((x, y) =&gt; y.score - x.score)
+    .<span class="tok-fn">slice</span>(0, TOP_K);
+}
+
+<span class="tok-com">// ---------- the seam: retrieval output becomes prompt input (zod, lesson 0003's doctrine) ----------</span>
+
+<span class="tok-kw">const</span> RetrievedChunk = z.<span class="tok-fn">object</span>({
+  text: z.<span class="tok-fn">string</span>(),
+  score: z.<span class="tok-fn">number</span>(),
+  index: z.<span class="tok-fn">number</span>(),
+});
+<span class="tok-kw">type</span> <span class="tok-typ">Retrieved</span> = z.<span class="tok-fn">infer</span>&lt;<span class="tok-kw">typeof</span> RetrievedChunk&gt;;
+
+<span class="tok-kw">function</span> <span class="tok-fn">asRetrieved</span>(raw: <span class="tok-typ">unknown</span>): Retrieved[] {
+  <span class="tok-com">// safeParse at the seam, exactly like lesson 0003's parseReply: the prompt builder</span>
+  <span class="tok-com">// downstream depends on this shape — the schema is the contract, checked.</span>
+  <span class="tok-kw">const</span> parsed = z.<span class="tok-fn">array</span>(RetrievedChunk).<span class="tok-fn">safeParse</span>(raw);
+  <span class="tok-kw">if</span> (!parsed.success) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`retriever output failed its own schema: ${parsed.error.message}`</span>);
+  <span class="tok-kw">return</span> parsed.data;
+}
+
+<span class="tok-com">// ---------- the grounded prompt: book §16.2.4, translated ----------</span>
+
+<span class="tok-kw">function</span> <span class="tok-fn">buildGroundedPrompt</span>(query: <span class="tok-typ">string</span>, docs: Retrieved[]) {
+  <span class="tok-kw">const</span> context = docs
+    .<span class="tok-fn">map</span>((d, i) =&gt; <span class="tok-str">`[Doc ${i + 1}] (score ${d.score.toFixed(3)})\n${d.text}`</span>)
+    .<span class="tok-fn">join</span>(<span class="tok-str">"\n\n"</span>);
+  <span class="tok-kw">return</span> {
+    system:
+      <span class="tok-str">"You are a retrieval-augmented assistant. Answer the question using ONLY the "</span> +
+      <span class="tok-str">"provided context documents. If the context does not contain enough information, "</span> +
+      <span class="tok-str">"say so explicitly — do not use your own knowledge to fill gaps. Cite your sources "</span> +
+      <span class="tok-str">"using [Doc N] notation."</span>,
+    user: <span class="tok-str">`Context documents:\n\n${context}\n\nQuestion: ${query}`</span>,
+  };
+}
+
+<span class="tok-com">// ---------- the loop, closed: ask, retrieve, ground, generate ----------</span>
+
+<span class="tok-kw">const</span> QUESTIONS = [
+  <span class="tok-str">"why must consecutive chunks share overlapping words"</span>, <span class="tok-com">// on-corpus: expect [Doc N] citations</span>
+  <span class="tok-str">"what do Vogons think of poetry"</span>, <span class="tok-com">// off-corpus: expect an honest "not in the context"</span>
+];
+
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> question <span class="tok-kw">of</span> QUESTIONS) {
+  <span class="tok-kw">const</span> docs = <span class="tok-fn">asRetrieved</span>(<span class="tok-kw">await</span> <span class="tok-fn">retrieve</span>(question)); <span class="tok-com">// the seam, checked</span>
+  <span class="tok-kw">const</span> prompt = <span class="tok-fn">buildGroundedPrompt</span>(question, docs);
+
+  <span class="tok-kw">const</span> reply = <span class="tok-kw">await</span> client.messages.<span class="tok-fn">create</span>({
+    model: <span class="tok-str">"claude-haiku-4-5"</span>,
+    max_tokens: 512,
+    system: prompt.system,
+    messages: [{ role: <span class="tok-str">"user"</span>, content: prompt.user }],
+  });
+
+  <span class="tok-kw">const</span> answer = reply.content
+    .<span class="tok-fn">filter</span>((b): b <span class="tok-kw">is</span> <span class="tok-typ">Anthropic.TextBlock</span> =&gt; b.type === <span class="tok-str">"text"</span>)
+    .<span class="tok-fn">map</span>((b) =&gt; b.text)
+    .<span class="tok-fn">join</span>(<span class="tok-str">""</span>);
+
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`\n${"=".repeat(72)}\nQ: ${question}`</span>);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`fed the model ${docs.length} chunks: ${docs.map((d, i) =&gt; `[Doc ${i + 1}] ${(d.score).toFixed(3)}`).join("  ")}`</span>);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`-${"".padEnd(70, "-")}`</span>);
+  console.<span class="tok-fn">log</span>(answer.<span class="tok-fn">trim</span>());
+}
+</code></pre></div>
+<div class="code-block"><div class="code-title">shell — run it (live)</div><pre><code>pnpm exec tsx labs/0005-grounded-answers/rag-qa.ts</code></pre></div>
+<p><strong>Expected</strong> (verified live 2026-09-08): the overlap question returns a two-paragraph answer citing <code>[Doc 1]</code> and <code>[Doc 3]</code> — the chunks carrying the overlap sentences, scores 0.541/0.485/0.456, <em>identical to lesson 0004's run</em> (deterministic embeddings, same model, same cache — reproducible RAG). The Vogon question comes back flat: scores ≈ 0.17, and the model answers, in substance, <em>&ldquo;I cannot answer this from the provided documents — they are about RAG, not Vogons.&rdquo;</em> That refusal, with zero fabrication, is grounding working. Read both answers against the fed chunks; check one citation by hand.</p>
+</div>
+
+<h2><span class="secno">§4</span>What you just built</h2>
+<p>The complete online half of RAG, and therefore — with lesson 0004 — the complete pipeline: <code>chunk → embed → retrieve → check → ground → generate</code>, every arrow typed by you, one honest cast, one schema at the one seam where subsystems meet. Two observations to carry forward:</p>
+<p><strong>Determinism where it matters.</strong> Same corpus, same model, same cache → identical scores across sessions. Your retrieval layer is a pure function of its inputs; only the generation step is stochastic. That split is why RAG systems are debuggable: when an answer is wrong, you first ask <em>did retrieval hand over the right chunks</em> (deterministic, checkable — you just did) before suspecting the model.</p>
+<p><strong>The capstone is this file, scaled.</strong> Four paragraphs become 636 pages; in-memory cosine becomes a vector index (an optimization, not a redesign — the vectors and the ranking are unchanged); the EXCERPT constant becomes a loader; the two questions become your users'. The architecture you can hold in working memory today is the architecture you'll ship.</p>
+
+<h2><span class="secno">§5</span>Check yourself</h2>
+<p>Two questions below are old friends returning from lessons 0001 and 0004 — spaced repetition, by design. Answer them from memory.</p>
+<div class="quiz" data-quiz="lesson0005"></div>
+<script type="application/json" id="lesson0005">
+[
+  {
+    "q": "The system prompt demands ONLY the provided context because…",
+    "options": [
+      "the model otherwise answers from its own weights",
+      "retrieved documents always outrank the model's memory",
+      "users prefer shorter answers based on fewer sources",
+      "the API refuses requests lacking a system persona"
+    ],
+    "answer": 0,
+    "explain": "Answering from parametric knowledge is the model's trained reflex — fluent, stale, sometimes invented. The ONLY-context instruction doesn't remove that knowledge; it forbids the model from using it for THIS answer. That's what makes every downstream citation meaningful: the answer's knowledge is boxed to the docs."
+  },
+  {
+    "q": "Every claim in the answer carries a [Doc N] so that it is…",
+    "options": [
+      "formatted consistently with the retrieval index schema",
+      "traceable back to the chunk that supports it",
+      "shorter than prose because tokens are expensive",
+      "ranked by cosine similarity inside the answer"
+    ],
+    "answer": 1,
+    "explain": "Citations convert fluency into auditability: any sentence can be checked against its chunk in seconds. That's the 'verifiable' in RAG's promise of 'accurate, grounded, and verifiable responses' (book §16.1) — and in production, the difference between 'the AI said' and 'the manual says.'"
+  },
+  {
+    "q": "Top-k selection beats a fixed score threshold because scores…",
+    "options": [
+      "rise linearly with the length of the query",
+      "are capped at one by the embedding model",
+      "carry no absolute meaning, only ranking is dependable",
+      "become stable once vectors are normalized properly"
+    ],
+    "answer": 2,
+    "explain": "A cosine score is a property of a PAIR (query, chunk) under one model — no universal line separates 'relevant' from not (your live runs: 0.54 for a strong match, 0.17 for none, and other queries would shift both). Ranking survives; absolute numbers don't. Let the say-so-if-insufficient instruction judge sufficiency — it reads the text, not the number."
+  },
+  {
+    "q": "JSON.parse hands you a value the compiler cannot vouch for (its signature says any). The type-safe move is…",
+    "options": ["narrow it first", "annotate it any", "label it string", "iterate it now"],
+    "answer": 0,
+    "explain": "JSON.parse is declared to return any — the type system vouches for nothing. Park the value in unknown (const d: unknown = JSON.parse(raw)), then narrow: typeof checks, a type guard, or a zod schema. Treating it as any is '# type: ignore' forever; calling it string or iterating it won't compile from unknown — which is the point: the compiler makes you prove what the data is before touching it."
+  },
+  {
+    "q": "A well-formed chunk must do all of these EXCEPT…",
+    "options": [
+      "respect the generator model's output token limit",
+      "fit inside the embedding model's context window",
+      "stay semantically coherent as a single unit",
+      "be useful when retrieved in complete isolation"
+    ],
+    "answer": 0,
+    "explain": "The three criteria (book §16.4) constrain the chunk against the EMBEDDING model and the reader — window fit, coherence, standalone utility. The generator's output limit constrains the answer, not the evidence; retrieved chunks ride IN the prompt, and their total is your context budget, a lesson-0005 concern."
+  }
+]
+</script>
+<script src="../assets/quiz.js"></script>
+
+<h2><span class="secno">§6</span>Primary sources, in order</h2>
+<ul>
+  <li><strong>First, from your book</strong> (Roitman 2026, <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>): ch. 16 §16.2.4 — the generation step you just implemented, in the book's own Python. Read it as a diff against your TypeScript: same contract, different clothes.</li>
+  <li><strong>Web primary:</strong> <a href="https://www.anthropic.com/engineering/contextual-retrieval">Anthropic — Introducing Contextual Retrieval</a>. What production RAG does when chunk-and-embed alone loses retrievals (contextual embeddings, BM25 hybrid, reranking). You now have every concept needed to read it critically — do.</li>
+  <li><strong>Keep open:</strong> the <a href="../reference/rag-answer-loop.html">grounded-loop cheat sheet</a> (prompt contract table, top-k argument, budget arithmetic, when to graduate to a vector store) and the <a href="../reference/chunking-embeddings.html">chunking cheat sheet</a>. Full list: <code>RESOURCES.md</code>.</li>
+</ul>
+
+<div class="callout note">
+  <p class="callout-title">Your teacher is on call</p>
+  <p>A citation that points at the wrong chunk, a refusal you didn't expect, the top-k argument, why the seam throws instead of dropping — <strong>ask in the chat</strong>. Also: if the geometric picture of scores-as-relative still feels shaky, say so; it's the one piece of today's math worth pressing on.</p>
+</div>
+
+<h2><span class="secno">§7</span>Where this goes</h2>
+<p><strong>Lesson 0006 — prove it works.</strong> You have a RAG loop; production needs evidence it <em>retrieves well and answers faithfully</em>. Next: a tiny evaluation harness — a handful of question/expected-chunk pairs, retrieval hit-rate scored in code, and the faithfulness question (&ldquo;did the answer stay inside its citations?&rdquo;) — the book's §16.6 toolkit, translated. Your spaced homework also returns: one more old friend from lesson 0002 comes back in 0006's quiz. After evaluation, the capstone is not just shippable — it's defensible.</p>
+
+<div class="lesson-footer">
+  <p>Lesson 0005 of the <em>Agents &amp; RAG in TypeScript</em> course · <a href="../reference/rag-answer-loop.html">Grounded-loop cheat sheet</a> · <a href="https://www.anthropic.com/engineering/contextual-retrieval">Primary source</a> · Book ch. 16 §16.2.4 · Next: <em>prove it works</em></p>
+  <div class="lesson-nav">
+    <a class="pill" href="0004-chunking-embeddings.html">prev: 0004 · chunk, embed, retrieve</a>
+    <span class="pill">next: 0006 · evaluate the loop</span>
+  </div>
+</div>
+
+</body>
+</html>
