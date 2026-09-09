@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — the RAG evaluation harness</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Reference · RAG evaluation cheat sheet · verified 2026-09-08 · claude-haiku-4-5 · book ch. 16 §16.8</p>
+<h1>The RAG evaluation harness</h1>
+<p class="subtitle">Golden set → retrieval metrics → citation check → faithfulness judge. The evidence layer that turns &ldquo;it seems to work&rdquo; into numbers — and tells you which half broke. Print me.</p>
+
+<p>Built in <a href="../lessons/0006-evaluate-the-loop.html">Lesson 0006</a>. Companions: the <a href="rag-answer-loop.html">grounded-loop cheat sheet</a> (what is being measured) and the <a href="chunking-embeddings.html">chunking cheat sheet</a> (what the gold annotations refer to). Book: Roitman 2026, ch. 16 §16.8 (<a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>).</p>
+
+<h2><span class="secno">§1</span>Three levels, three questions</h2>
+<table>
+  <tr><th>Level</th><th>Question</th><th>Instruments</th><th>Stability</th></tr>
+  <tr><td><strong>1 · Retrieval</strong></td><td>Did the right passages surface — how high?</td><td>recall@k, precision@k, MRR over a golden set</td><td>deterministic (pure function of corpus + model + cache)</td></tr>
+  <tr><td><strong>2 · Generation</strong></td><td>Correct? Faithful to context? Relevant?</td><td>citation check (mechanical) · faithfulness judge (semantic) · answer relevance</td><td>judge is stochastic — expect ±1 claim across runs</td></tr>
+  <tr><td><strong>3 · End-to-end</strong></td><td>Does the user win?</td><td>human preference, task success rate, latency-adjusted utility</td><td>production territory</td></tr>
+</table>
+<p><strong>Debug protocol:</strong> when an answer is wrong, climb from the bottom of cost and variance — check level 1 first (free, instant, reproducible), then level 2. The book's §16.8 warning travels with the table: optimizing one level in isolation backfires (max recall via big k ⇒ context full of marginal passages ⇒ generation <em>degrades</em>).</p>
+
+<h2><span class="secno">§2</span>The golden set, anatomized</h2>
+<div class="code-block"><div class="code-title">evaluation data is code</div><pre><code>interface GoldRow {
+  q: string;              // the question a real user might ask
+  relevant: number[];     // chunk indices a HUMAN judged relevant — annotation is the irreplaceable step
+  expectRefusal?: true;   // negative probe: nothing is relevant; the system wins by refusing
+}</code></pre></div>
+<table>
+  <tr><th>Rule</th><th>Why</th></tr>
+  <tr><td>Annotation is human, once, by reading the corpus</td><td>The chunker cuts mid-sentence by design — some answers genuinely straddle chunks (our &ldquo;three limitations&rdquo; row: gold <code>[0, 1]</code>). Deciding that is judgment, not automation</td></tr>
+  <tr><td>Multi-gold rows are allowed and welcome</td><td>They turn recall from found/not-found into an honest fraction — half the evidence is half the answer</td></tr>
+  <tr><td>Keep at least one negative probe</td><td>A system can score perfectly on answerable questions and still fail the user whose question has no answer (the Vogon row)</td></tr>
+  <tr><td>The set grows with real use</td><td>Every user question that exposes a bug becomes a row — the harness compounds</td></tr>
+</table>
+
+<h2><span class="secno">§3</span>The retrieval metrics, translated</h2>
+<div class="code-block"><div class="code-title">book eq. 16.22–16.24, in plain code</div><pre><code>recall@k     = |top-k ∩ gold| / |gold|     // of what's relevant, what share made it? (hit-rate when |gold| = 1)
+precision@k  = |top-k ∩ gold| / k          // of what you fed the model, what share was gold? (the over-retrieval tax)
+MRR          = mean( 1 / rank-of-first-gold )   // position, not just presence: rank 1 → 1.0, rank 2 → 0.5</code></pre></div>
+<p>Our verified run (lesson 0006, corpus of 4 chunks, 4 scored rows + 1 probe): <code>recall@1 = 0.875 · recall@2 = 1.000 · precision@2 = 0.625 · precision@3 = 0.417 · MRR = 1.000</code>. The story those numbers tell: k=2 finds every gold chunk; k=3 adds no recall and dilutes precision — so the shipped config is k=2, on evidence. Note also the near-tie row (golds at 0.390 / 0.379, both under 0.4): <em>any</em> hardcoded score threshold would have retrieved neither — the top-k doctrine, now with proof.</p>
+<p class="quiet">NDCG@k (eq. 16.25) is the same idea with a finer ruler — graded relevance (0/1/2…) discounted by position. Reach for it when your annotations carry grades; binary gold does not need it.</p>
+
+<h2><span class="secno">§4</span>Faithfulness, two moves (eq. 16.26)</h2>
+<div class="code-block"><div class="code-title">faithfulness = claims supported by context / total claims</div><pre><code>move 1 — citation integrity (mechanical, deterministic):
+        regex /\[Doc (\d+)\]/g over the answer → every N must resolve to a fed doc
+        catches: fabricated REFERENCES (failure mode #6's mechanical half)
+
+move 2 — the judge (semantic, live):
+        second model call reads context + answer together, enumerates each distinct
+        factual claim, verdicts it supported / unsupported BY THE CONTEXT ALONE
+        catches: unsupported CLAIMS — incl. the weights leak (failure mode #5:
+        "hallucination despite retrieval — model ignores context, answers from
+        parametric memory"), i.e. grounding failing at generation time</code></pre></div>
+<table>
+  <tr><th>Judge contract clause</th><th>Why</th></tr>
+  <tr><td>Strict JSON: <code>{"claims":[{claim, supported}]}</code></td><td>Structured output, not prose — the verdict must be machine-usable</td></tr>
+  <tr><td>zod <code>safeParse</code> at the boundary (strip fences first)</td><td>The judge's text is untrusted output at your third boundary: wire → seam → judge</td></tr>
+  <tr><td><strong>Judge enumerates; your code divides</strong></td><td>Never let the model do the metric's arithmetic — extraction is its job, the ratio is yours</td></tr>
+  <tr><td>Judge reads context <em>alone</em> as ground truth</td><td>Faithfulness measures grounding, not world-truth; a perfectly faithful answer can still be wrong if retrieval fed it lies (that's context poisoning, mode #2)</td></tr>
+</table>
+<p class="quiet">Faithful ≠ relevant: a refusal (&ldquo;the context does not contain this&rdquo;) scores 1.0 — every claim supported — and answers nothing. Answer relevance (eq. 16.27) is the other axis.</p>
+
+<h2><span class="secno">§5</span>The failure-mode ledger (book §16.8.4)</h2>
+<table>
+  <tr><th>#</th><th>Failure mode</th><th>Caught by</th><th>Where it lives in our loop</th></tr>
+  <tr><td>1</td><td>Retrieval miss — gold exists, isn't retrieved</td><td>recall@k drops</td><td>chunker / embedder / vocabulary gap between query and chunk</td></tr>
+  <tr><td>2</td><td>Context poisoning — retrieved docs mislead</td><td>faithfulness <em>stays high</em> while correctness drops</td><td>the corpus; retrieval can be perfect and still hand you lies</td></tr>
+  <tr><td>3</td><td>Lost-in-the-middle — long contexts ignored centrally</td><td>recall fine, faithfulness dips on long prompts</td><td>the prompt assembly; grows with k and chunk size</td></tr>
+  <tr><td>4</td><td>Over-retrieval — too many chunks dilute</td><td>precision@k drops</td><td>your k knob; the recall-vs-precision trade made numeric in §3</td></tr>
+  <tr><td>5</td><td>Hallucination despite retrieval — answers from weights</td><td>faithfulness drops</td><td>the ONLY-context instruction failing; grounding's raison d'être</td></tr>
+  <tr><td>6</td><td>Citation fabrication — claims attributed to docs that don't support them</td><td>citation check (mechanical) + judge (semantic)</td><td>the [Doc N] convention abused</td></tr>
+</table>
+
+<h2><span class="secno">§6</span>When to graduate to a framework</h2>
+<p><a href="https://docs.ragas.io/en/latest/">RAGAs</a> (book §16.8.3) packages exactly what you hand-rolled — reference-free, LLM-judged faithfulness / answer-relevance / context-precision / context-recall — plus answer correctness against reference answers. Adopt it when the harness's maintenance cost exceeds a dependency's cost: many golden rows, multiple corpora, CI integration. Until then, yours is small, typed, deterministic where it can be, and every line of it is yours. (Currency note: RAGAs' v0.1 API took <code>question/answer/contexts/ground_truth</code>; v0.2+ renamed to <code>user_input/response/retrieved_contexts/reference</code> — the book's listing 16.12 shows the old shape.)</p>
+
+</body>
+</html>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0006 — Evaluate the loop</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 0006 · ~45 minutes · RAG track · book ch. 16 §16.8</p>
+<h1>Evaluate the loop</h1>
+<p class="subtitle">You have built RAG end to end and watched it work — twice. But &ldquo;watched it work&rdquo; is an anecdote, not evidence. Today the loop gets a harness: a golden set of questions with known-right chunks, retrieval metrics computed in deterministic code, and a judge that scores whether an answer stayed inside its evidence. When the capstone works, you will be able to prove it. When it breaks, you will know <em>which half</em> broke.</p>
+
+<div class="callout win">
+  <p class="callout-title">Today's win</p>
+  <p>Two files. <code>retrieval.ts</code> — lesson 0004's core, promoted from script to <em>module</em>. <code>evaluate.ts</code> — an offline metrics table (recall@k, precision@k, MRR) over a golden set, then one live judged answer with citation checking. The same harness rides into the capstone unchanged; only the golden set grows.</p>
+</div>
+
+<h2><span class="secno">§1</span>Why evaluation is its own discipline</h2>
+<p>The book's §16.8 opens with the uncomfortable arithmetic of pipelines: <em>errors can originate at any stage — and they compound.</em> A perfect generator cannot compensate for irrelevant retrievals, and a perfect retriever is wasted if the generator hallucinates or ignores what it was handed. So a RAG system that &ldquo;feels right&rdquo; in demos tells you nothing about where its next failure will come from. Evaluation therefore works at levels:</p>
+<table>
+  <tr><th>Level</th><th>The question it answers</th><th>Instrument</th></tr>
+  <tr><td>1 · Retrieval quality</td><td>Did the right passages surface — and how high?</td><td>Metrics over a golden set, in deterministic code (today, fully)</td></tr>
+  <tr><td>2 · Generation quality</td><td>Is the answer correct, <em>faithful</em> to its context, relevant?</td><td>Citation check + LLM judge (today: faithfulness)</td></tr>
+  <tr><td>3 · End-to-end quality</td><td>Does the full system satisfy the user?</td><td>Human preference, task success — production concerns, named for later</td></tr>
+</table>
+<p>The book's warning is worth pinning to the wall: <em>optimizing only one level backfires.</em> Its example — maximizing recall with a large k fills the context with marginally relevant passages that actively degrade generation. You will watch that happen to your own numbers today, in the precision column. And note the failure mode the book lists under §16.8.4: <em>&ldquo;hallucination despite retrieval — model ignores retrieved context and generates from parametric memory.&rdquo;</em> That is your lesson-0005 quiz miss, wearing its production name. Faithfulness is the metric built to catch it.</p>
+
+<h2><span class="secno">§2</span>Three ideas, each with a why</h2>
+<p><strong>1. The golden set — evaluation data is code.</strong> A small array of rows: a question, the chunk indices <em>a human judged relevant</em>, and — for questions that deserve no answer — an <code>expectRefusal</code> flag. The annotation is the irreplaceable step: you read the corpus once and mark, for each question, which chunks contain the answer. Judgment, because your chunker cuts mid-sentence by design — today one question's answer genuinely straddles <em>two</em> chunks, and the annotator (you) says so. The negative probe keeps the harness honest: a system can score perfectly on questions that have answers and still fail the user whose question has none. Your Vogon control question is that probe.</p>
+<p><strong>2. Three retrieval metrics, one why each</strong> (book eq. 16.22–16.24, translated):
+<br><strong>recall@k</strong> — <em>of the chunks that are relevant, what share made the top-k?</em> With single-gold questions this is hit-rate: found or not. With multi-gold questions it can be <code>0.5</code> — half the evidence made it — which is exactly what happens today.
+<br><strong>precision@k</strong> — <em>of the chunks you fed the model, what share was gold?</em> This is the over-retrieval tax, measured. Every non-gold chunk in the prompt is dilution the book warned about, paid for in tokens.
+<br><strong>MRR</strong> (mean reciprocal rank) — the average of <code>1/rank</code> of the <em>first</em> gold chunk. Position, not just presence: gold at rank 1 contributes 1.0, gold at rank 2 contributes 0.5. A retriever that finds the answer eventually and a retriever that finds it <em>first</em> are not the same engine.</p>
+<p><strong>3. Faithfulness in two moves</strong> (book eq. 16.26: <code>claims supported by context / total claims</code>). The mechanical move is a <strong>citation check</strong>: extract every <code>[Doc N]</code> from the answer with a regex and verify it resolves to a chunk you actually fed — three lines of deterministic code that catch fabricated <em>references</em>. The semantic move is a <strong>judge</strong>: a second model call that reads the context and the answer together, enumerates the answer's claims, and verdicts each one supported or not — <em>by the context alone</em>. Then the discipline that makes it trustworthy: <strong>the judge enumerates, your code divides.</strong> The model never computes the metric's arithmetic; it returns structured verdicts, zod checks them at the boundary (the wire → the seam → the judge: your lesson-0003 doctrine, third deployment), and TypeScript does the ratio.</p>
+
+<h2><span class="secno">§3</span>The lab — the harness, end to end</h2>
+
+<div class="task">
+<p class="task-title">Lab — retrieval.ts + evaluate.ts: measure, then judge</p>
+<p><strong>Step 0 — promote the retrieval core to a module.</strong> You have typed this machinery three times; that is fluency, and a fourth typing would just be typing. Today you <em>move</em> it: open <code>labs/0005-grounded-answers/rag-qa.ts</code>, copy the retrieval half (corpus, chunker, cosine, embedder) into a new file, and change two things — add <code>export</code> to the interface and the function, and have <code>rank()</code> return the <em>full</em> ranking instead of a top-k slice (evaluation must measure every k; the k you ship is one slice of the data). Notice what leaves with the slice: the zod seam. In-process module calls carry compile-time types — the contract is the signature now; runtime schemas return the moment data crosses a wire again, in step 3b.</p>
+<div class="code-block"><div class="code-title">shell — from the repository root</div><pre><code>mkdir -p labs/0006-evaluate-the-loop</code></pre></div>
+<div class="code-block"><div class="code-title">labs/0006-evaluate-the-loop/retrieval.ts</div><pre><code><span class="tok-com">// Lesson 0004's retrieval core, fourth typing — and its promotion to a MODULE.</span>
+<span class="tok-com">// One deliberate interface change from lesson 0005: rank() returns the FULL ranking,</span>
+<span class="tok-com">// because evaluation must measure every k — the k you ship is just one slice of it.</span>
+<span class="tok-com">// Offline: the embedding model is local — this file never touches the network.</span>
+
+<span class="tok-kw">import</span> { pipeline } <span class="tok-kw">from</span> <span class="tok-str">"@huggingface/transformers"</span>;
+
+<span class="tok-kw">const</span> EXCERPT = [
+  <span class="tok-str">"Retrieval-Augmented Generation equips large language models with a dynamic, updatable external memory, enabling accurate, grounded, and verifiable responses across knowledge-intensive tasks."</span>,
+  <span class="tok-str">"Large language models store knowledge parametrically, compressed into billions of weights during training. This creates three fundamental limitations: hallucination, where models confidently generate plausible but incorrect statements beyond their reliable knowledge boundary; knowledge staleness, because training data has a cutoff date; and domain specificity, since general-purpose models lack deep knowledge of proprietary codebases and documents."</span>,
+  <span class="tok-str">"Chunking is the process of splitting documents into segments that are small enough to fit in an embedding model's context window, semantically coherent, and containing enough context to be useful when retrieved in isolation."</span>,
+  <span class="tok-str">"The simplest strategy splits every W tokens with an overlap of O tokens between consecutive chunks. Overlap preserves context across boundaries: a sentence cut at a chunk edge still appears whole inside its neighbour chunk, so retrieval never loses a thought merely because a window ended mid-thought."</span>,
+].<span class="tok-fn">join</span>(<span class="tok-str">"\n\n"</span>);
+
+<span class="tok-kw">function</span> <span class="tok-fn">chunkTexts</span>(text: <span class="tok-typ">string</span>, size: <span class="tok-typ">number</span>, overlap: <span class="tok-typ">number</span>): <span class="tok-typ">string</span>[] {
+  <span class="tok-kw">if</span> (overlap &gt;= size) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`overlap (${overlap}) must be smaller than size (${size})`</span>);
+  <span class="tok-kw">const</span> words = text.<span class="tok-fn">split</span>(<span class="tok-str">/\s+/</span>).<span class="tok-fn">filter</span>(Boolean);
+  <span class="tok-kw">const</span> step = size - overlap;
+  <span class="tok-kw">const</span> out: <span class="tok-typ">string</span>[] = [];
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> start = 0; start &lt; words.length; start += step) {
+    <span class="tok-kw">const</span> window = words.<span class="tok-fn">slice</span>(start, start + size);
+    <span class="tok-kw">if</span> (window.length === 0) <span class="tok-kw">break</span>;
+    out.<span class="tok-fn">push</span>(window.<span class="tok-fn">join</span>(<span class="tok-str">" "</span>));
+    <span class="tok-kw">if</span> (start + size &gt;= words.length) <span class="tok-kw">break</span>;
+  }
+  <span class="tok-kw">return</span> out;
+}
+
+<span class="tok-kw">function</span> <span class="tok-fn">cosine</span>(a: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;, b: <span class="tok-typ">ArrayLike</span>&lt;<span class="tok-typ">number</span>&gt;): <span class="tok-typ">number</span> {
+  <span class="tok-kw">let</span> dot = 0;
+  <span class="tok-kw">let</span> normA = 0;
+  <span class="tok-kw">let</span> normB = 0;
+  <span class="tok-kw">for</span> (<span class="tok-kw">let</span> i = 0; i &lt; a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  <span class="tok-kw">return</span> dot / (Math.<span class="tok-fn">sqrt</span>(normA) * Math.<span class="tok-fn">sqrt</span>(normB));
+}
+
+<span class="tok-kw">const</span> embedder = <span class="tok-kw">await</span> <span class="tok-fn">pipeline</span>(<span class="tok-str">"feature-extraction"</span>, <span class="tok-str">"Xenova/all-MiniLM-L6-v2"</span>);
+
+<span class="tok-kw">async function</span> <span class="tok-fn">embed</span>(text: <span class="tok-typ">string</span>): <span class="tok-typ">Promise</span>&lt;<span class="tok-typ">Float32Array</span>&gt; {
+  <span class="tok-kw">const</span> tensor = <span class="tok-kw">await</span> <span class="tok-fn">embedder</span>(text, { pooling: <span class="tok-str">"mean"</span>, normalize: <span class="tok-str">true</span> });
+  <span class="tok-kw">return</span> tensor.data <span class="tok-kw">as</span> <span class="tok-typ">Float32Array</span>;
+}
+
+<span class="tok-kw">const</span> chunks = <span class="tok-fn">chunkTexts</span>(EXCERPT, 60, 12);
+<span class="tok-kw">const</span> chunkVectors = <span class="tok-kw">await</span> <span class="tok-typ">Promise</span>.<span class="tok-fn">all</span>(chunks.<span class="tok-fn">map</span>(embed));
+
+<span class="tok-kw">export interface</span> <span class="tok-typ">RankedChunk</span> {
+  text: <span class="tok-typ">string</span>;
+  score: <span class="tok-typ">number</span>;
+  index: <span class="tok-typ">number</span>; <span class="tok-com">// position in `chunks` — the identity the golden set refers to</span>
+}
+
+<span class="tok-com">/** All chunks for one query, best first. Callers slice their own top-k. */</span>
+<span class="tok-kw">export async function</span> <span class="tok-fn">rank</span>(query: <span class="tok-typ">string</span>): <span class="tok-typ">Promise</span>&lt;<span class="tok-typ">RankedChunk</span>[]&gt; {
+  <span class="tok-kw">const</span> queryVector = <span class="tok-kw">await</span> <span class="tok-fn">embed</span>(query);
+  <span class="tok-kw">return</span> chunks
+    .<span class="tok-fn">map</span>((text, index) =&gt; ({ text, score: <span class="tok-fn">cosine</span>(queryVector, chunkVectors[index]), index }))
+    .<span class="tok-fn">sort</span>((x, y) =&gt; y.score - x.score);
+}
+</code></pre></div>
+<p><strong>Step 1 — the harness.</strong> Golden set, metrics, citation check, judge:</p>
+<div class="code-block"><div class="code-title">labs/0006-evaluate-the-loop/evaluate.ts</div><pre><code><span class="tok-com">// The evidence layer: does the loop you built actually work? Numbers, not vibes.</span>
+<span class="tok-com">// Book §16.8, translated. Offline half: metrics. Live half: judge (needs the key).</span>
+
+<span class="tok-kw">import</span> Anthropic <span class="tok-kw">from</span> <span class="tok-str">"@anthropic-ai/sdk"</span>;
+<span class="tok-kw">import</span> { z } <span class="tok-kw">from</span> <span class="tok-str">"zod"</span>;
+<span class="tok-kw">import</span> { rank } <span class="tok-kw">from</span> <span class="tok-str">"./retrieval.js"</span>; <span class="tok-com">// nodenext: the file is retrieval.TS — import paths say .js</span>
+
+<span class="tok-kw">try</span> {
+  process.<span class="tok-fn">loadEnvFile</span>(<span class="tok-str">".env"</span>); <span class="tok-com">// metrics half works without it; judge half needs the key</span>
+} <span class="tok-kw">catch</span> {
+  <span class="tok-com">// no .env — fine: the offline metrics below still run to completion</span>
+}
+
+<span class="tok-com">// ---------- 1. The golden set: evaluation data is code, annotation is the human step ----------</span>
+
+<span class="tok-kw">interface</span> <span class="tok-typ">GoldRow</span> {
+  q: <span class="tok-typ">string</span>;
+  relevant: <span class="tok-typ">number</span>[]; <span class="tok-com">// chunk indices a human judged relevant — by reading the corpus once</span>
+  expectRefusal?: <span class="tok-kw">true</span>; <span class="tok-com">// negative probe: nothing is relevant; the SYSTEM wins by refusing</span>
+}
+
+<span class="tok-com">// Annotated against chunkTexts(EXCERPT, 60, 12) — boundaries verified live:</span>
+<span class="tok-com">// the chunker cuts mid-sentence (by design), so annotation is judgment, and judgment is yours.</span>
+<span class="tok-kw">const</span> GOLDEN: GoldRow[] = [
+  { q: <span class="tok-str">"why must consecutive chunks share overlapping words"</span>, relevant: [2] },
+  { q: <span class="tok-str">"what three limitations come from storing knowledge in weights"</span>, relevant: [0, 1] }, <span class="tok-com">// the list straddles both</span>
+  { q: <span class="tok-str">"what does chunking do to documents"</span>, relevant: [1] },
+  { q: <span class="tok-str">"what does retrieval-augmented generation give to language models"</span>, relevant: [0] },
+  { q: <span class="tok-str">"what do Vogons think of poetry"</span>, relevant: [], expectRefusal: <span class="tok-kw">true</span> }, <span class="tok-com">// off-corpus control</span>
+];
+
+<span class="tok-com">// ---------- 2. Retrieval metrics (book eq. 16.22–16.24, translated) ----------</span>
+
+<span class="tok-kw">const</span> rows = <span class="tok-kw">await</span> <span class="tok-typ">Promise</span>.<span class="tok-fn">all</span>(
+  GOLDEN.<span class="tok-fn">map</span>(<span class="tok-kw">async</span> (g) =&gt; ({ ...g, ranked: <span class="tok-kw">await</span> <span class="tok-fn">rank</span>(g.q) })),
+);
+
+console.<span class="tok-fn">log</span>(<span class="tok-str">"=== Level 1 — retrieval quality (deterministic: same corpus, model, cache) ===\n"</span>);
+
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> row <span class="tok-kw">of</span> rows) {
+  <span class="tok-kw">const</span> top3 = row.ranked.<span class="tok-fn">slice</span>(0, 3).<span class="tok-fn">map</span>((r) =&gt; <span class="tok-str">`${r.index}:${r.score.toFixed(3)}`</span>).<span class="tok-fn">join</span>(<span class="tok-str">"  "</span>);
+  <span class="tok-kw">if</span> (row.expectRefusal) {
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`negative probe: "${row.q}"`</span>);
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`  top-3: ${top3} — flat; nothing is relevant, and the system wins by refusing\n`</span>);
+    <span class="tok-kw">continue</span>;
+  }
+  <span class="tok-kw">const</span> positions = row.relevant.<span class="tok-fn">map</span>((i) =&gt; row.ranked.<span class="tok-fn">findIndex</span>((r) =&gt; r.index === i) + 1);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`"${row.q}"`</span>);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`  gold ${row.relevant.join(", ")} at rank(s) ${positions.join(", ")}   top-3: ${top3}\n`</span>);
+}
+
+<span class="tok-kw">const</span> scored = rows.<span class="tok-fn">filter</span>((r) =&gt; !r.expectRefusal); <span class="tok-com">// negative probes carry no retrieval score</span>
+
+<span class="tok-com">// recall@k: of the chunks that ARE relevant, what share made the top-k?</span>
+<span class="tok-kw">const</span> recallAt = (k: <span class="tok-typ">number</span>) =&gt;
+  scored.<span class="tok-fn">reduce</span>((sum, row) =&gt; {
+    <span class="tok-kw">const</span> topK = row.ranked.<span class="tok-fn">slice</span>(0, k).<span class="tok-fn">map</span>((r) =&gt; r.index);
+    <span class="tok-kw">const</span> hits = row.relevant.<span class="tok-fn">filter</span>((i) =&gt; topK.<span class="tok-fn">includes</span>(i)).length;
+    <span class="tok-kw">return</span> sum + hits / row.relevant.length;
+  }, 0) / scored.length;
+
+<span class="tok-com">// precision@k: of the chunks you fed the model, what share was gold? (the over-retrieval tax)</span>
+<span class="tok-kw">const</span> precisionAt = (k: <span class="tok-typ">number</span>) =&gt;
+  scored.<span class="tok-fn">reduce</span>((sum, row) =&gt; {
+    <span class="tok-kw">const</span> topK = row.ranked.<span class="tok-fn">slice</span>(0, k).<span class="tok-fn">map</span>((r) =&gt; r.index);
+    <span class="tok-kw">const</span> hits = row.relevant.<span class="tok-fn">filter</span>((i) =&gt; topK.<span class="tok-fn">includes</span>(i)).length;
+    <span class="tok-kw">return</span> sum + hits / k;
+  }, 0) / scored.length;
+
+<span class="tok-com">// MRR: 1/rank of the FIRST gold chunk, averaged — position is rewarded, not just presence</span>
+<span class="tok-kw">const</span> mrr =
+  scored.<span class="tok-fn">reduce</span>((sum, row) =&gt; {
+    <span class="tok-kw">const</span> first = row.ranked.<span class="tok-fn">findIndex</span>((r) =&gt; row.relevant.<span class="tok-fn">includes</span>(r.index)) + 1;
+    <span class="tok-kw">return</span> sum + 1 / first;
+  }, 0) / scored.length;
+
+console.<span class="tok-fn">log</span>(<span class="tok-str">`recall@1 = ${recallAt(1).toFixed(3)}    recall@2 = ${recallAt(2).toFixed(3)}    recall@3 = ${recallAt(3).toFixed(3)}`</span>);
+console.<span class="tok-fn">log</span>(<span class="tok-str">`precision@2 = ${precisionAt(2).toFixed(3)}    precision@3 = ${precisionAt(3).toFixed(3)}`</span>);
+console.<span class="tok-fn">log</span>(<span class="tok-str">`MRR = ${mrr.toFixed(3)}`</span>);
+
+<span class="tok-com">// ---------- 3. Faithfulness (live): citation check + judge (book eq. 16.26) ----------</span>
+
+<span class="tok-kw">const</span> client = process.env.ANTHROPIC_API_KEY ? <span class="tok-kw">new</span> <span class="tok-typ">Anthropic</span>() : <span class="tok-kw">null</span>;
+
+<span class="tok-kw">if</span> (!client) {
+  console.<span class="tok-fn">log</span>(<span class="tok-str">"=== Level 2 — skipped: no ANTHROPIC_API_KEY (run with .env present for the judge) ==="</span>);
+} <span class="tok-kw">else</span> {
+  console.<span class="tok-fn">log</span>(<span class="tok-str">"=== Level 2 — generation quality: faithfulness (live) ==="</span>);
+
+  <span class="tok-kw">const</span> judged = GOLDEN[0]; <span class="tok-com">// the overlap question — the one you eyeballed in lesson 0005</span>
+  <span class="tok-kw">const</span> docs = (<span class="tok-kw">await</span> <span class="tok-fn">rank</span>(judged.q)).<span class="tok-fn">slice</span>(0, 2); <span class="tok-com">// top-2: recall@2 = 1.00, and precision beats k=3</span>
+  <span class="tok-kw">const</span> context = docs
+    .<span class="tok-fn">map</span>((d, i) =&gt; <span class="tok-str">`[Doc ${i + 1}] (score ${d.score.toFixed(3)})\n${d.text}`</span>)
+    .<span class="tok-fn">join</span>(<span class="tok-str">"\n\n"</span>);
+
+  <span class="tok-kw">const</span> answerReply = <span class="tok-kw">await</span> client.messages.<span class="tok-fn">create</span>({
+    model: <span class="tok-str">"claude-haiku-4-5"</span>,
+    max_tokens: 512,
+    system:
+      <span class="tok-str">"You are a retrieval-augmented assistant. Answer the question using ONLY the "</span> +
+      <span class="tok-str">"provided context documents. If the context does not contain enough information, "</span> +
+      <span class="tok-str">"say so explicitly — do not use your own knowledge to fill gaps. Cite your sources "</span> +
+      <span class="tok-str">"using [Doc N] notation."</span>,
+    messages: [{ role: <span class="tok-str">"user"</span>, content: <span class="tok-str">`Context documents:\n\n${context}\n\nQuestion: ${judged.q}`</span> }],
+  });
+  <span class="tok-kw">const</span> answer = answerReply.content
+    .<span class="tok-fn">filter</span>((b): b <span class="tok-kw">is</span> <span class="tok-typ">Anthropic.TextBlock</span> =&gt; b.type === <span class="tok-str">"text"</span>)
+    .<span class="tok-fn">map</span>((b) =&gt; b.text)
+    .<span class="tok-fn">join</span>(<span class="tok-str">""</span>);
+
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`question: ${judged.q}`</span>);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`answer:\n${answer.trim()}\n`</span>);
+
+  <span class="tok-com">// 3a. citation integrity — the mechanical half, deterministic: every [Doc N] must resolve</span>
+  <span class="tok-kw">const</span> cited = [...answer.<span class="tok-fn">matchAll</span>(<span class="tok-str">/\[Doc (\d+)\]/g</span>)].<span class="tok-fn">map</span>((m) =&gt; <span class="tok-typ">Number</span>(m[1]));
+  <span class="tok-kw">const</span> dangling = cited.<span class="tok-fn">filter</span>((n) =&gt; n &lt; 1 || n &gt; docs.length);
+  console.<span class="tok-fn">log</span>(
+    dangling.length === 0
+      ? <span class="tok-str">`citation check: ${cited.length} citation(s), all resolve to fed docs — pass`</span>
+      : <span class="tok-str">`citation check: FAIL — [Doc ${dangling.join("], [Doc ")}] not among the ${docs.length} fed docs`</span>,
+  );
+
+  <span class="tok-com">// 3b. the judge — the semantic half: does each claim trace to the context? (eq. 16.26)</span>
+  <span class="tok-kw">const</span> judgeReply = <span class="tok-kw">await</span> client.messages.<span class="tok-fn">create</span>({
+    model: <span class="tok-str">"claude-haiku-4-5"</span>,
+    max_tokens: 1024,
+    system:
+      <span class="tok-str">'You are an evaluation judge. Given context documents and an answer, enumerate the answer\'s '</span> +
+      <span class="tok-str">"distinct factual claims and decide for each whether the CONTEXT ALONE supports it. Respond with "</span> +
+      <span class="tok-str">'ONLY a JSON object of shape {"claims":[{"claim":string,"supported":boolean}]} — no preamble, no trailing prose.'</span>,
+    messages: [
+      { role: <span class="tok-str">"user"</span>, content: <span class="tok-str">`Context documents:\n\n${context}\n\nAnswer: ${answer}\n\nEnumerate the claims.`</span> },
+    ],
+  });
+  <span class="tok-kw">const</span> judgeText = judgeReply.content
+    .<span class="tok-fn">filter</span>((b): b <span class="tok-kw">is</span> <span class="tok-typ">Anthropic.TextBlock</span> =&gt; b.type === <span class="tok-str">"text"</span>)
+    .<span class="tok-fn">map</span>((b) =&gt; b.text)
+    .<span class="tok-fn">join</span>(<span class="tok-str">""</span>);
+
+  <span class="tok-com">// the judge's text is untrusted output at a new boundary: strip fences, parse, THEN zod —</span>
+  <span class="tok-com">// the lesson-0003 doctrine, third boundary (wire → seam → judge)</span>
+  <span class="tok-kw">const</span> JudgeVerdict = z.<span class="tok-fn">object</span>({
+    claims: z.<span class="tok-fn">array</span>(z.<span class="tok-fn">object</span>({ claim: z.<span class="tok-fn">string</span>(), supported: z.<span class="tok-fn">boolean</span>() })),
+  });
+  <span class="tok-kw">const</span> verdict = JudgeVerdict.<span class="tok-fn">safeParse</span>(
+    (() =&gt; {
+      <span class="tok-kw">try</span> {
+        <span class="tok-kw">return</span> <span class="tok-typ">JSON</span>.<span class="tok-fn">parse</span>(judgeText.<span class="tok-fn">replace</span>(<span class="tok-str">/^```(?:json)?\s*/i</span>, <span class="tok-str">""</span>).<span class="tok-fn">replace</span>(<span class="tok-str">/\s*```$/</span>, <span class="tok-str">""</span>).<span class="tok-fn">trim</span>());
+      } <span class="tok-kw">catch</span> (e) {
+        <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`judge output is not JSON — got: ${judgeText.slice(0, 200)}`</span>);
+      }
+    })(),
+  );
+  <span class="tok-kw">if</span> (!verdict.success) <span class="tok-kw">throw new</span> <span class="tok-typ">Error</span>(<span class="tok-str">`judge output failed its schema: ${verdict.error.message}`</span>);
+
+  <span class="tok-com">// the judge enumerates; YOUR code divides. Never let the model do the metric's arithmetic.</span>
+  <span class="tok-kw">const</span> claims = verdict.data.claims;
+  <span class="tok-kw">const</span> supported = claims.<span class="tok-fn">filter</span>((c) =&gt; c.supported).length;
+  <span class="tok-kw">for</span> (<span class="tok-kw">const</span> c <span class="tok-kw">of</span> claims) console.<span class="tok-fn">log</span>(<span class="tok-str">`  ${c.supported ? "✓" : "✗"} ${c.claim}`</span>);
+  console.<span class="tok-fn">log</span>(
+    <span class="tok-str">`\nfaithfulness = ${supported}/${claims.length} = ${(supported / claims.length).toFixed(2)} (eq. 16.26)`</span>,
+  );
+}
+</code></pre></div>
+<div class="code-block"><div class="code-title">shell — run it (loads .env itself; works offline without it)</div><pre><code>pnpm typecheck
+pnpm exec tsx labs/0006-evaluate-the-loop/evaluate.ts</code></pre></div>
+<p><strong>Expected</strong> (verified live 2026-09-08): Level 1 prints four annotated rows plus the flat Vogon probe, then <code>recall@1 = 0.875 · recall@2 = 1.000 · precision@2 = 0.625 · precision@3 = 0.417 · MRR = 1.000</code>. Read the second row before you run it — the &ldquo;three limitations&rdquo; question has <em>two</em> gold chunks, ranked 1 and 2 at scores 0.390 and 0.379, both <strong>below 0.4</strong>: recall@1 is 0.875 precisely because k=1 can only fetch half that answer's evidence, and any score threshold you might have hardcoded would have fetched <em>neither</em>. Level 2 ships <strong>k=2</strong> — the metrics' verdict, not taste — and the judged overlap answer (same question you eyeballed in 0005) passes the citation check and returns 5 claims, all supported: <code>faithfulness = 5/5 = 1.00</code>.</p>
+</div>
+
+<h2><span class="secno">§4</span>What you just built</h2>
+<p><strong>The evidence harness.</strong> Three things to carry out of it:</p>
+<p><strong>Measurement changed your configuration.</strong> Lesson 0005 shipped k=3 on taste; today's numbers say k=2 finds every gold chunk and k=3 only adds dilution — so the judged answer ships k=2. That is the entire profession in one move: defaults are hypotheses; metrics are the verdict. Every capstone change (chunk size, overlap, model, k) now re-runs this file and defends itself with the same table.</p>
+<p><strong>The determinism split, again and forever.</strong> Level 1 is a pure function — same corpus, model, cache → identical scores across sessions (your 0.541 top hit is the same number lessons 0004 and 0005 printed). The judge is stochastic: re-run it and claim counts may shift by one. So the debugging protocol is ordered by cost and stability: when an answer is wrong, check level 1 first (deterministic, free, instant), and only then suspect level 2. You will use this protocol for the rest of your career.</p>
+<p><strong>One metric, one failure mode.</strong> Recall drops → the retriever (or the chunker — the straddled gold is your standing example that chunk boundaries shape what is findable). Precision drops → over-retrieval, dilution, cost. Citation check fails → fabricated references, a mechanical bug. Faithfulness drops → the weights leak, failure mode #5, the model ignoring your evidence. Wrong but faithful and well-retrieved → the answer-relevance axis, level 2's other half, waiting in the cheat sheet.</p>
+
+<h2><span class="secno">§5</span>Check yourself</h2>
+<p>Two questions below are old friends returning from lessons 0002 and 0005 — spaced repetition, by design. Answer them from memory.</p>
+<div class="quiz" data-quiz="lesson0006"></div>
+<script type="application/json" id="lesson0006">
+[
+  {
+    "q": "Evaluation measures retrieval and generation separately because…",
+    "options": [
+      "errors at either stage compound into wrong answers",
+      "the API bills the two stages quite differently",
+      "retrieval metrics always run faster than generation ones",
+      "users only ever see the retrieval half working"
+    ],
+    "answer": 0,
+    "explain": "The book's §16.8 opening: errors originate anywhere and compound — a perfect generator cannot rescue irrelevant retrievals, and a perfect retriever is wasted if the generator hallucinates or ignores context. Level-separated metrics tell you WHICH half broke. The other three options are inventions."
+  },
+  {
+    "q": "A faithfulness score of 0.75 on an answer means…",
+    "options": [
+      "one claim in four lacks context support",
+      "three of four retrieved chunks got cited",
+      "a quarter of the citations were fabricated",
+      "the answer used three of four documents"
+    ],
+    "answer": 0,
+    "explain": "Eq. 16.26 is a ratio over CLAIMS: supported-by-context over total. 0.75 means one of every four claims traces to nothing you fed the model — a weights leak or an invention, the exact thing the judge exists to catch. Citation counts and document usage are different axes entirely."
+  },
+  {
+    "q": "Hit-rate says the gold chunk was found. MRR additionally asks…",
+    "options": [
+      "how high the gold chunk ranked",
+      "how long the query embedding took",
+      "how many chunks the corpus holds",
+      "whether the answer cited its sources"
+    ],
+    "answer": 0,
+    "explain": "MRR is the mean of 1/rank-of-first-gold (eq. 16.24): rank 1 contributes 1.0, rank 2 contributes 0.5. Finding gold at rank 1 and finding it at rank 4 are both 'hits', but only one puts the best evidence in front of the model early. Whether the answer cited its sources is faithfulness's territory, not retrieval's."
+  },
+  {
+    "q": "The system prompt demands ONLY the provided context because…",
+    "options": [
+      "the model otherwise answers from its own weights",
+      "retrieved documents always outrank the model's memory",
+      "users prefer shorter answers based on fewer sources",
+      "the API refuses requests lacking a system persona"
+    ],
+    "answer": 0,
+    "explain": "Answering from parametric knowledge is the model's trained reflex — fluent, stale, sometimes invented. The ONLY-context instruction doesn't remove that knowledge; it forbids the model from using it for THIS answer. That's what makes every downstream citation meaningful: the answer's knowledge is boxed to the docs."
+  },
+  {
+    "q": "Claude never runs your TypeScript function. What it actually emits is…",
+    "options": ["JSON you dispatch", "a function pointer", "an RPC handshake", "a linked module"],
+    "answer": 0,
+    "explain": "A tool_use block is data — a name plus JSON input. Your code validates that JSON (it arrives as unknown) and dispatches it. The validate-and-dispatch layer you hand-wrote in lesson 0002 is exactly what agent frameworks and MCP formalize — which is why you wrote it by hand first."
+  }
+]
+</script>
+<script src="../assets/quiz.js"></script>
+
+<h2><span class="secno">§6</span>Primary sources, in order</h2>
+<ul>
+  <li><strong>First, from your book</strong> (Roitman 2026, <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>): ch. 16 §16.8 — the metrics you just implemented, in the book's own notation, plus the six failure modes. Read eq. 16.22–16.26 as a diff against your TypeScript.</li>
+  <li><strong>Web primary:</strong> <a href="https://docs.ragas.io/en/latest/">RAGAs — evaluation framework docs</a>. What today's harness becomes when it grows up: reference-free, LLM-judged metrics (their <a href="https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/faithfulness/">faithfulness page</a> is eq. 16.26 in production dress). You hand-rolled its core idea; read it as recognition, not novelty.</li>
+  <li><strong>TS footnote:</strong> the <code>./retrieval.js</code> import is <a href="https://www.typescriptlang.org/docs/handbook/modules/reference.html">the Handbook's modules reference</a> in one rule — under nodenext, relative imports name the <em>emitted</em> file. Bookmark it; it bites every TypeScript native eventually.</li>
+  <li><strong>Keep open:</strong> the <a href="../reference/eval-harness.html">evaluation cheat sheet</a> (the three levels, golden-set anatomy, the metrics, the failure-mode ledger) and the <a href="../reference/rag-answer-loop.html">grounded-loop cheat sheet</a>. Full list: <code>RESOURCES.md</code>.</li>
+</ul>
+
+<div class="callout note">
+  <p class="callout-title">Your teacher is on call</p>
+  <p>Why recall@1 landed at 0.875 and not 1.0, how MRR averages, what to do when the judge returns prose instead of JSON, why the seam moved from the module call to the judge boundary — <strong>ask in the chat</strong>. Also: if the multi-gold row (the straddled &ldquo;three limitations&rdquo; answer) is the first time recall felt like a fraction rather than a found/not-found flag, say so; that fraction is the whole point.</p>
+</div>
+
+<h2><span class="secno">§7</span>Where this goes</h2>
+<p><strong>Lesson 0007 — the capstone begins.</strong> The corpus becomes the Hitchhiker's Guide itself: 636 pages through your chunker, vectors beyond what in-memory cosine comfortably ranks (the <a href="../reference/rag-answer-loop.html">graduation table</a> finally earns its row), questions from real use. And the harness rides along — a golden set written from real questions, re-run on every change, the numbers defending every decision. The architecture you can hold in working memory is about to meet its scaled self. It will not need to change; that is what the last three lessons were for.</p>
+
+<div class="lesson-footer">
+  <p>Lesson 0006 of the <em>Agents &amp; RAG in TypeScript</em> course · <a href="../reference/eval-harness.html">Evaluation cheat sheet</a> · <a href="https://docs.ragas.io/en/latest/">Primary source</a> · Book ch. 16 §16.8 · Next: <em>the capstone</em></p>
+  <div class="lesson-nav">
+    <a class="pill" href="0005-grounded-answers.html">prev: 0005 · grounded answers</a>
+    <span class="pill">next: 0007 · the capstone, scaled</span>
+  </div>
+</div>
+
+</body>
+</html>
