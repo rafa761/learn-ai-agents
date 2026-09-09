@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — the grounded answer loop</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+
+<p class="kicker">Reference · RAG generation cheat sheet · verified 2026-09-08 · claude-haiku-4-5 · book ch. 16 §16.2.4</p>
+<h1>The grounded answer loop</h1>
+<p class="subtitle">The online half of RAG, closed end to end: retrieve → check the seam → ground the prompt → generate → cite — and refuse. Print me.</p>
+
+<p>Built in <a href="../lessons/0005-grounded-answers.html">Lesson 0005</a>. Companions: the <a href="chunking-embeddings.html">chunking &amp; embeddings cheat sheet</a> (offline half) and the <a href="zod-boundary.html">zod boundary cheat sheet</a> (the seam). Book: Roitman 2026, ch. 16 (<a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>).</p>
+
+<h2><span class="secno">§1</span>The loop, end to end</h2>
+<div class="code-block"><div class="code-title">offline once (lesson 0004) · online per query (lesson 0005)</div><pre><code>OFFLINE   document → chunk → embed → keep vectors + text in memory
+ONLINE    query → embed → cosine-rank → top-k → <strong>zod seam</strong> → grounded prompt → model → cited answer | refusal</code></pre></div>
+<p>Every arrow is code you have typed. Nothing in the online half changes when the corpus grows from four paragraphs to 636 pages except <em>where the vectors live</em> (§5).</p>
+
+<h2><span class="secno">§2</span>The grounded prompt (book §16.2.4, translated)</h2>
+<div class="code-block"><div class="code-title">three instructions, one contract</div><pre><code>system: <span class="tok-str">"Answer using ONLY the provided context. If the context does not contain</span>
+        <span class="tok-str">enough information, say so explicitly — do not fill gaps from your own</span>
+        <span class="tok-str">knowledge. Cite your sources using [Doc N] notation."</span>
+
+user:    <span class="tok-str">"Context documents:\n\n[Doc 1] (score 0.541)\n…chunk…\n\n[Doc 2] …\n\nQuestion: …"</span></code></pre></div>
+<table>
+  <tr><th>Instruction</th><th>Why it exists</th><th>What breaks without it</th></tr>
+  <tr><td><strong>ONLY the context</strong></td><td>The model <em>will</em> answer from weights otherwise — that is its training</td><td>Stale or invented facts smuggled beside correct retrievals</td></tr>
+  <tr><td><strong>Say so if insufficient</strong></td><td>Makes refusal a <em>correct answer</em>, not a failure</td><td>Fluent hallucination on off-corpus queries</td></tr>
+  <tr><td><strong>Cite [Doc N]</strong></td><td>Every claim becomes checkable against a chunk</td><td>Plausible text you cannot audit</td></tr>
+</table>
+<p class="quiet">Verified live 2026-09-08: with all three, an on-corpus query cites [Doc 1] [Doc 3]; the off-corpus control (&ldquo;what do Vogons think of poetry&rdquo;) refuses honestly. The refusal is the feature working, not the system failing.</p>
+
+<h2><span class="secno">§3</span>Why top-k, never a score threshold</h2>
+<p>A cosine score is not a property of a text. It is a property of a <em>pair</em> (query, chunk), computed by one particular model. Same query tomorrow, same value; different query, different scale entirely. Our two live queries scored 0.54 (great match) and 0.17 (no match) — but a broader query can max out at 0.35 and a narrow one never drops below 0.5. There is no universal &ldquo;0.4 means relevant&rdquo; line, so a hardcoded threshold is a bug that works on Tuesdays. <strong>The ranking is the dependable part; take the best k and let the generator judge sufficiency</strong> — that is exactly what the say-so-if-insufficient instruction is for.</p>
+
+<h2><span class="secno">§4</span>The retrieval budget, in arithmetic</h2>
+<div class="code-block"><div class="code-title">what one question costs</div><pre><code>prompt ≈ system (~60 tokens) + Σ retrieved chunks + question
+chunks ≈ k × tokens-per-chunk          e.g. 3 × ~80 = 240 tokens — trivial
+capstone: 10 × ~250 = 2,500 tokens per question — a real line item, so k is a knob</code></pre></div>
+<p>k is the only budget dial visible to the retriever: raise it for recall (more evidence), lower it for cost and focus (less dilution). Chunk size sets it indirectly — double the chunk size and you halve how many chunks fit. This is the constraint your lesson-0004 quiz miss distinguished: it budgets the <em>prompt</em>, it does not shape the chunk.</p>
+
+<h2><span class="secno">§5</span>When to graduate from in-memory cosine</h2>
+<table>
+  <tr><th>Corpus size</th><th>Retrieval</th><th>Cost</th></tr>
+  <tr><td>≤ ~10k chunks (this course, so far)</td><td><code>vectors.map(cosine).sort()</code> in memory</td><td>milliseconds, zero infrastructure</td></tr>
+  <tr><td>beyond</td><td>a vector store / ANN index (pgvector, sqlite-vec, hosted)</td><td>an <em>optimization</em>, not a semantic change — same vectors, same cosine, indexed so you don&rsquo;t scan all of them</td></tr>
+</table>
+<p>The store finds approximate nearest directions without comparing against everything — trading a little recall for a lot of speed. Nothing you learned changes: embed, rank, top-k; only the &ldquo;rank&rdquo; step gets an index behind it. The capstone will need this; lesson 0006&rsquo;s evaluation harness will tell you <em>whether</em> it does.</p>
+
+<h2><span class="secno">§6</span>The stack, one table</h2>
+<table>
+  <tr><th>Layer</th><th>Tool</th><th>Role</th></tr>
+  <tr><td>Embed</td><td><code>@huggingface/transformers</code> 4.2.0 + all-MiniLM-L6-v2 (384d, local)</td><td>text → unit vector; model + mean pooling + normalize</td></tr>
+  <tr><td>Rank</td><td>hand-rolled cosine (book eq. 16.3)</td><td>angle between query and chunk vectors</td></tr>
+  <tr><td>Guard</td><td>zod 4.5.4 at the retrieval seam</td><td>prompt builder receives only schema-shaped chunks</td></tr>
+  <tr><td>Generate</td><td><code>@anthropic-ai/sdk</code> 0.124.0, <code>claude-haiku-4-5</code></td><td>grounded answer with [Doc N] citations or refusal</td></tr>
+</table>
+
+</body>
+</html>
