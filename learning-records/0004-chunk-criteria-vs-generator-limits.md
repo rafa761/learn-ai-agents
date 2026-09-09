@@ -14,3 +14,5 @@ The EXCEPT format itself is also a hazard (negation questions cost working memor
 **Implications:** the miss lands one lesson early — 0005 opens with exactly this budget: retrieved chunks ride IN the prompt, their total is the context budget, and the grounded-answer prompt (book §16.2.4) is where generator-side limits finally appear. Q5 must be interleaved — re-asked verbatim — in lesson 0005's quiz (joining the already-scheduled Q4 return from LR-0002; 0005's quiz will carry two interleaves).
 
 **Standing scheduling after this session:** Q4 (LR-0002) returns ≈ lesson 0005 · Q5 (this LR) returns lesson 0005 · Q3 (LR-0003) returns ≈ lesson 0006.
+
+**Spacing evidence (positive, 2026-09-08):** Q5 interleaved into lesson 0005's quiz one lesson after the miss was retrieved correctly on first attempt. Interval expands: next return ≈ lesson 0008.

@@ -1,0 +1,11 @@
+# Missed Q1 (lesson 0005 quiz): grounding's why — the model's default is its own weights — not yet retrievable
+
+Lesson-0005 quiz (2026-09-08): 4/5 first-attempt. The single miss was the grounding-motive question — he did not retrieve that the ONLY-context instruction exists because *answering from parametric knowledge is the model's trained default* ("the model otherwise answers from its own weights").
+
+**Evidence:** self-reported first-attempt result; per-question map in his browser under `learn-ai-agents:lesson0005`.
+
+**The distinction to install:** a model holds two knowledge sources — parametric (compressed into weights during training; always available; fluent, stale, sometimes invented) and non-parametric (the context pasted into the prompt). Nothing in the machinery gives one precedence over the other: retrieval *finds* text, it does not *compel* use. The ONLY-context instruction is what manufactures precedence; without it, weights win by reflex, not by ranking. Which distractor he chose is unknown (the report lists only the correct answer) — the plausible pull is "retrieved documents always outrank the model's memory": it echoes the ranking-is-dependable theme from the top-k question he answered correctly in the same quiz (interference is plausible), and it inverts cause and effect — there is no outranking until the instruction creates it. He has also *seen* the correct answer live: lesson 0003's schema-drift experiment (model guessed enum values from weights when context ran dry) and lesson 0005's own opening paragraph.
+
+**Implications:** the miss lands one lesson early, exactly like LR-0004's — lesson 0006 (RAG evaluation) is *about* this distinction. A faithfulness check asks "did the answer stay inside its citations?", which is only a meaningful test because the alternative to a grounded claim is a weights-generated one. Scoring faithfulness gives the concept a second, measurable handle. Q1 must be interleaved — re-asked verbatim — in lesson 0006's quiz, joining the already-scheduled Q3 return (LR-0003); 0006's quiz carries two interleaves.
+
+**Standing schedule after this session:** Q1 (this LR) returns lesson 0006 · Q3 (LR-0003) returns ≈ lesson 0006 · Q5 (LR-0004) next ≈ lesson 0008 · Q4 (LR-0002) next ≈ lesson 0010 (retire on correct).
