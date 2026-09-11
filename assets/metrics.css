@@ -1,0 +1,154 @@
+/* ============================================================
+   learn-ai-agents — metric lab components (pairs with metrics.js)
+   ------------------------------------------------------------
+   Static diagram classes (.ml-chip, .topk, .frac, .podium,
+   .ml-claim) render without the script — lessons and reference
+   docs use them for pictures. Interactive mounts (.rank-lab,
+   .faith-lab) are wired by assets/metrics.js.
+   ============================================================ */
+
+/* ---------- stacked fraction: sienna numerator / blue denominator ---------- */
+
+.frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: middle;
+  line-height: 1.2;
+  margin: 0 0.25em;
+  font-weight: 700;
+}
+.frac .num { padding: 0 0.35em; border-bottom: 1.5px solid var(--ink); color: var(--accent-deep); }
+.frac .den { padding: 0 0.35em; color: #1f5f8b; }
+
+/* ---------- chunk chips (static or interactive) ---------- */
+
+.ml-chips { display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: stretch; margin: 0.6rem 0; }
+.ml-chip {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  border: 1.5px solid var(--rule);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.35rem 0.6rem;
+  text-align: center;
+  line-height: 1.3;
+  user-select: none;
+}
+.ml-chip .ml-rank { display: block; font-size: 0.6rem; color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; }
+.ml-chip .ml-chunk { font-weight: 600; }
+.ml-chip.gold { border-color: var(--accent); background: var(--accent-soft); }
+.ml-chip.gold .ml-chunk::after { content: " ★"; color: var(--accent); }
+.ml-chip.out { opacity: 0.35; }
+.ml-chip.first { box-shadow: 0 3px 0 var(--ok); }
+
+/* the dashed box around the in-window chips (static diagrams) */
+.topk {
+  display: inline-flex;
+  gap: 0.45rem;
+  border: 2px dashed var(--ok);
+  border-radius: 10px;
+  padding: 0.35rem;
+}
+.ml-caption { font-size: 0.92rem; color: var(--muted); margin: 0.25rem 0 0.9rem; }
+
+/* ---------- interactive mounts ---------- */
+
+.rank-lab, .faith-lab {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: #fdfaf2;
+  padding: 0.9rem 1rem 1rem;
+  margin: 1.2rem 0;
+}
+.rank-lab .ml-title, .faith-lab .ml-title {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.3rem;
+}
+.rank-lab .ml-chip { cursor: pointer; transition: border-color 0.12s ease, background 0.12s ease; }
+.rank-lab .ml-chip:hover { border-color: var(--accent); }
+
+.ml-krow {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 0.3rem 0 0.5rem;
+}
+.ml-krow input[type="range"] { flex: 1; accent-color: var(--accent); }
+.ml-krow .ml-klabel { font-weight: 700; color: var(--accent-deep); }
+
+.ml-readouts {
+  display: grid;
+  gap: 0.4rem;
+  border-top: 1px dashed var(--rule);
+  padding-top: 0.6rem;
+  margin-top: 0.5rem;
+}
+.ml-readout { margin: 0; font-size: 0.96rem; }
+.ml-readout b { font-family: var(--mono); font-size: 0.9em; color: var(--ink); }
+.ml-readout .ml-frac { font-family: var(--mono); font-size: 0.85em; color: var(--muted); }
+
+.ml-hint {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  margin-top: 0.6rem;
+}
+
+/* ---------- faithfulness claims (static or interactive) ---------- */
+
+.ml-claim {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.32rem 0;
+  border-bottom: 1px dotted var(--rule);
+}
+.ml-claim:last-child { border-bottom: none; }
+.ml-claim-text { font-size: 0.97rem; }
+.ml-badge {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+  padding: 0.12rem 0.55rem;
+  border: 1px solid;
+  white-space: nowrap;
+  user-select: none;
+}
+.ml-badge.on  { color: var(--ok);  border-color: var(--ok);  background: var(--ok-soft); }
+.ml-badge.off { color: var(--bad); border-color: var(--bad); background: var(--bad-soft); }
+.faith-lab .ml-badge { cursor: pointer; }
+
+/* ---------- MRR podium (static) ---------- */
+
+.podium { display: flex; align-items: flex-end; gap: 0.55rem; height: 128px; margin: 0.9rem 0 0.3rem; }
+.podium .col {
+  flex: 0 0 70px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.28rem;
+}
+.podium .bar { width: 100%; background: var(--accent-soft); border: 1.5px solid var(--accent); border-radius: 4px 4px 0 0; }
+.podium .col.gold .bar { background: var(--accent); }
+.podium .lab, .podium .val { font-family: var(--mono); font-size: 0.66rem; color: var(--muted); }
+.podium .col.gold .lab { color: var(--accent-deep); font-weight: 700; }
+
+/* ---------- print ---------- */
+
+@media print {
+  .ml-krow input[type="range"] { display: none; }
+  .rank-lab, .faith-lab { break-inside: avoid; }
+}

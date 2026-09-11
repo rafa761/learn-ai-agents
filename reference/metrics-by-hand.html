@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — RAG metrics by hand</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="../assets/metrics.css">
+</head>
+<body>
+
+<p class="kicker">Reference · RAG metrics · one page · print me</p>
+<h1>Metrics by hand</h1>
+<p class="subtitle">Every score is a fraction: <span style="color:var(--accent-deep); font-weight:700;">numerator</span> over <span style="color:#1f5f8b; font-weight:700;">denominator</span>. Name the denominator before you believe the number. Holds the answer keys for <a href="../lessons/0007-read-the-metrics.html">lesson 0007</a>'s pencil work.</p>
+
+<h2><span class="secno">§1</span>The fraction table</h2>
+<table class="ref-table">
+  <tr><th>Metric</th><th>Question</th><th><span style="color:var(--accent-deep)">Numerator</span></th><th><span style="color:#1f5f8b">Denominator</span></th><th>Eq.</th></tr>
+  <tr><td><code>recall@k</code></td><td>how much existing gold did top-k find?</td><td>gold inside window</td><td>gold existing</td><td>16.22</td></tr>
+  <tr><td><code>precision@k</code></td><td>how much of top-k was gold?</td><td>gold inside window</td><td>window width k</td><td>16.23</td></tr>
+  <tr><td><code>1/rank</code></td><td>how early did the first gold sit?</td><td>1 (the podium)</td><td>rank of first gold</td><td>16.24</td></tr>
+  <tr><td><code>faithfulness</code></td><td>how many claims trace to context?</td><td>claims supported</td><td>claims total</td><td>16.26</td></tr>
+</table>
+<p>Recall and precision share a numerator and swap denominators. MRR divides by a position. Faithfulness divides by a <strong>claim count</strong> — never chunks, citations, or documents. Harness numbers are <strong>means of per-row fractions</strong>; the mean hides which row owes the debt, so decompose before you optimize.</p>
+
+<h2><span class="secno">§2</span>The four pictures</h2>
+<div class="ml-chips">
+  <span class="topk">
+    <span class="ml-chip"><span class="ml-rank">rank 1</span><span class="ml-chunk">c0</span></span>
+    <span class="ml-chip gold"><span class="ml-rank">rank 2</span><span class="ml-chunk">c1</span></span>
+  </span>
+  <span class="ml-chip gold out"><span class="ml-rank">rank 3</span><span class="ml-chunk">c2</span></span>
+  <span class="ml-chip out"><span class="ml-rank">rank 4</span><span class="ml-chunk">c3</span></span>
+</div>
+<p class="ml-caption"><strong>recall@2 = 1/2</strong> — gold inside 1 over gold existing 2. <code>c2</code> is recall's unpaid debt. Same scene: <strong>precision@2 = 1/2</strong> — gold inside 1 over window width 2. Widen to k=3: recall &rarr; 1.0 (debt collected), precision &rarr; 1/3 (dilution grows). Coverage and cost move on different denominators.</p>
+<div class="podium">
+  <div class="col"><span class="val">1.00</span><div class="bar" style="height:96px"></div><span class="lab">rank 1</span></div>
+  <div class="col gold"><span class="val">0.50</span><div class="bar" style="height:48px"></div><span class="lab">rank 2 ★</span></div>
+  <div class="col"><span class="val">0.33</span><div class="bar" style="height:32px"></div><span class="lab">rank 3</span></div>
+  <div class="col"><span class="val">0.25</span><div class="bar" style="height:24px"></div><span class="lab">rank 4</span></div>
+</div>
+<p class="ml-caption"><strong>1/rank</strong> — first gold at rank 2 earns half the podium. MRR = mean of the shares. Gold never retrieved contributes 0.</p>
+<div class="ml-claim"><span class="ml-badge on">✓ in context</span><span class="ml-claim-text">supported claim — counts in the numerator</span></div>
+<div class="ml-claim"><span class="ml-badge off">✗ from nowhere</span><span class="ml-claim-text">unsupported claim — a weights leak or invention</span></div>
+<p class="ml-caption"><strong>faithfulness = supported / total claims</strong> — the judge enumerates, the code divides. Badges move the numerator; only the enumeration moves the denominator. 3 of 4 &rarr; 0.75.</p>
+
+<h2><span class="secno">§3</span>Answer key A — lesson 0006's real numbers</h2>
+<table class="ref-table">
+  <tr><th>Row</th><th>Gold</th><th>Gold ranks</th><th>recall@1</th><th>recall@2</th><th>prec@2</th><th>prec@3</th><th>1/rank</th></tr>
+  <tr><td>overlap why</td><td><code>[2]</code></td><td>1</td><td>1/1</td><td>1/1</td><td>1/2</td><td>1/3</td><td>1/1</td></tr>
+  <tr><td>three limitations</td><td><code>[0,1]</code></td><td>1, 2</td><td><strong>1/2</strong></td><td>2/2</td><td>2/2</td><td>2/3</td><td>1/1</td></tr>
+  <tr><td>chunking does</td><td><code>[1]</code></td><td>1</td><td>1/1</td><td>1/1</td><td>1/2</td><td>1/3</td><td>1/1</td></tr>
+  <tr><td>RAG gives</td><td><code>[0]</code></td><td>1</td><td>1/1</td><td>1/1</td><td>1/2</td><td>1/3</td><td>1/1</td></tr>
+  <tr><td><strong>mean</strong></td><td></td><td></td><td><strong>0.875</strong></td><td><strong>1.000</strong></td><td><strong>0.625</strong></td><td><strong>5/12 ≈ 0.417</strong></td><td><strong>1.000</strong></td></tr>
+</table>
+<p>The 0.875 = (1 + 0.5 + 1 + 1)/4 — the straddled row's half, averaged. Only that row can improve; the other three are already perfect. <strong>Ship k=2</strong>: recall is complete there, and k=3 buys no new gold while precision falls.</p>
+
+<h2><span class="secno">§4</span>Answer key B — lesson 0007's toy golden set</h2>
+<table class="ref-table">
+  <tr><th>Row</th><th>Ranking</th><th>Gold</th><th>1st gold</th><th>r@1</th><th>r@2</th><th>r@3</th><th>p@1</th><th>p@2</th><th>p@3</th></tr>
+  <tr><td>overlap why</td><td><code>2 0 1 3</code></td><td><code>[2]</code></td><td>1</td><td>1/1</td><td>1/1</td><td>1/1</td><td>1/1</td><td>1/2</td><td>1/3</td></tr>
+  <tr><td>three limitations</td><td><code>0 1 2 3</code></td><td><code>[0,1]</code></td><td>1</td><td>1/2</td><td>2/2</td><td>2/2</td><td>1/1</td><td>2/2</td><td>2/3</td></tr>
+  <tr><td>RAG gives</td><td><code>1 0 2 3</code></td><td><code>[0]</code></td><td><strong>2</strong></td><td>0/1</td><td>1/1</td><td>1/1</td><td>0/1</td><td>1/2</td><td>1/3</td></tr>
+  <tr><td><strong>mean</strong></td><td></td><td></td><td></td><td><strong>0.500</strong></td><td><strong>1.000</strong></td><td><strong>1.000</strong></td><td><strong>0.667</strong></td><td><strong>0.667</strong></td><td><strong>4/9 ≈ 0.444</strong></td></tr>
+</table>
+<p>MRR = (1/1 + 1/1 + 1/2)/3 = <strong>0.833</strong>. Faithfulness = 4/5 = <strong>0.800</strong>. Row three is the podium lesson: a hit at k=2 (recall satisfied) that still costs half the MRR share — found, but late.</p>
+
+<h2><span class="secno">§5</span>One metric, one failure mode</h2>
+<table class="ref-table">
+  <tr><th>If this drops…</th><th>The suspect</th></tr>
+  <tr><td>recall@k</td><td>retriever or chunker — evidence not findable / not in one window (the straddled gold)</td></tr>
+  <tr><td>precision@k</td><td>over-retrieval — dilution and token cost (book failure mode #4)</td></tr>
+  <tr><td>MRR</td><td>gold present but buried — ranking quality, not coverage</td></tr>
+  <tr><td>citation check</td><td>mechanical fabrication — a <code>[Doc N]</code> that resolves to nothing</td></tr>
+  <tr><td>faithfulness</td><td>weights leak — model ignored context (failure mode #5)</td></tr>
+  <tr><td>all retrieval fine, answer wrong</td><td>answer relevance — level 2's other axis, not yet instrumented</td></tr>
+</table>
+<p>Full ledger with book references: the <a href="eval-harness.html">evaluation cheat sheet</a>. Interactive versions of the pictures: lesson 0007 §4.</p>
+
+<div class="lesson-footer">
+  <p>Reference for lessons 0006–0007 · <a href="../lessons/0007-read-the-metrics.html">Lesson 0007 — read the scores</a> · <a href="eval-harness.html">Evaluation cheat sheet</a> · Manning, Raghavan &amp; Schütze, <a href="https://nlp.stanford.edu/IR-book/html/htmledition/evaluation-in-information-retrieval-1.html">IR Book ch. 8</a></p>
+</div>
+
+</body>
+</html>

@@ -43,6 +43,7 @@ precision@k  = |top-k ∩ gold| / k          // of what you fed the model, what 
 MRR          = mean( 1 / rank-of-first-gold )   // position, not just presence: rank 1 → 1.0, rank 2 → 0.5</code></pre></div>
 <p>Our verified run (lesson 0006, corpus of 4 chunks, 4 scored rows + 1 probe): <code>recall@1 = 0.875 · recall@2 = 1.000 · precision@2 = 0.625 · precision@3 = 0.417 · MRR = 1.000</code>. The story those numbers tell: k=2 finds every gold chunk; k=3 adds no recall and dilutes precision — so the shipped config is k=2, on evidence. Note also the near-tie row (golds at 0.390 / 0.379, both under 0.4): <em>any</em> hardcoded score threshold would have retrieved neither — the top-k doctrine, now with proof.</p>
 <p class="quiet">NDCG@k (eq. 16.25) is the same idea with a finer ruler — graded relevance (0/1/2…) discounted by position. Reach for it when your annotations carry grades; binary gold does not need it.</p>
+<p class="quiet">These equations as pictures and pencil work — numerator over denominator, with both answer keys: <a href="metrics-by-hand.html">metrics-by-hand cheat sheet</a>.</p>
 
 <h2><span class="secno">§4</span>Faithfulness, two moves (eq. 16.26)</h2>
 <div class="code-block"><div class="code-title">faithfulness = claims supported by context / total claims</div><pre><code>move 1 — citation integrity (mechanical, deterministic):

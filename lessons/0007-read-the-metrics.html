@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0007 — Read the scores</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="../assets/metrics.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 0007 · ~35 minutes · RAG track · book ch. 16 §16.8, revisited</p>
+<h1>Read the scores</h1>
+<p class="subtitle">You implemented the metrics, passed the quiz — and then told me the numbers still arrive from nowhere. That report is worth more than the 4/5 was: a quiz measures <em>recognition</em>, and recognition is not <em>reading</em>. So today nothing new gets built. Today the four numbers become things you can produce with a pencil — including the 0.875 your own harness printed at you in <a href="0006-evaluate-the-loop.html">lesson 0006</a>.</p>
+
+<div class="callout win">
+  <p class="callout-title">Today's win</p>
+  <p>One page of fraction arithmetic, checked by machines. By the end you can compute <code>recall@k</code>, <code>precision@k</code>, MRR and faithfulness <em>by hand</em> — on lesson 0006's real numbers, on a fresh toy golden set, and on the 0.875 itself — and name the denominator of every score before you believe it.</p>
+</div>
+
+<h2><span class="secno">§1</span>One idea under all four metrics</h2>
+<p>Every score in the harness is the same gesture: <strong>count the things that made it, divide by the things you measured against.</strong> A fraction. The top of a fraction is called the <em>numerator</em>; the bottom is the <em>denominator</em>. Throughout this lesson the numerator is <span style="color:var(--accent-deep); font-weight:700;">sienna</span> and the denominator is <span style="color:#1f5f8b; font-weight:700;">blue</span> — learn the colors and you will never misread a score again.</p>
+<table class="ref-table">
+  <tr><th>Metric</th><th>The question it answers</th><th>Numerator (what made it)</th><th>Denominator (measured against)</th></tr>
+  <tr><td><code>recall@k</code></td><td>Of the gold that exists, how much did the top-k window find?</td><td>gold inside the window</td><td>gold existing in total (eq. 16.22)</td></tr>
+  <tr><td><code>precision@k</code></td><td>Of what you fed the model, how much was gold?</td><td>gold inside the window</td><td>window width <code>k</code> (eq. 16.23)</td></tr>
+  <tr><td><code>1/rank</code> (MRR's share)</td><td>How high did the <em>first</em> gold chunk sit?</td><td>1 — the whole podium</td><td>rank of that first gold (eq. 16.24)</td></tr>
+  <tr><td><code>faithfulness</code></td><td>Of the answer's claims, how many trace to the context?</td><td>claims the context supports</td><td>claims in the answer, total (eq. 16.26)</td></tr>
+</table>
+<p>Read that table as the whole lesson in miniature: recall and precision share a numerator and swap denominators; MRR divides by a <em>position</em>; faithfulness divides by a count of <em>claims</em> — never chunks, never citations, never documents. Your quiz miss from 0006 (&ldquo;a faithfulness of 0.75&hellip;&rdquo;) was not a knowledge gap — it was a <strong>denominator swap</strong>. The rule to carry out of today: <strong>read any score as &ldquo;<em>x</em> of <em>y</em>&rdquo; before believing it. If you cannot name <em>y</em>, the number has not told you anything yet.</strong></p>
+
+<h2><span class="secno">§2</span>The pictures</h2>
+<p>Four scenes, one per metric. Chunks are <code>c0</code>&ndash;<code>c3</code>; gold chunks (a human marked them relevant) carry a star; the dashed box is the top-k window — what actually reached the model.</p>
+
+<h3>Recall — the coverage fraction</h3>
+<div class="ml-chips">
+  <span class="topk">
+    <span class="ml-chip"><span class="ml-rank">rank 1</span><span class="ml-chunk">c0</span></span>
+    <span class="ml-chip gold"><span class="ml-rank">rank 2</span><span class="ml-chunk">c1</span></span>
+  </span>
+  <span class="ml-chip gold out"><span class="ml-rank">rank 3</span><span class="ml-chunk">c2</span></span>
+  <span class="ml-chip out"><span class="ml-rank">rank 4</span><span class="ml-chunk">c3</span></span>
+</div>
+<p class="ml-caption">recall@2 = <span class="frac"><span class="num">gold inside window: 1</span><span class="den">gold existing: 2</span></span> = 1/2 &rarr; <strong>0.50</strong>. Look at <code>c2</code>: gold, real, existing — and outside the window. That is recall's unpaid debt, and k=3 would collect it.</p>
+
+<h3>Precision — the dilution fraction</h3>
+<div class="ml-chips">
+  <span class="topk">
+    <span class="ml-chip"><span class="ml-rank">rank 1</span><span class="ml-chunk">c0</span></span>
+    <span class="ml-chip gold"><span class="ml-rank">rank 2</span><span class="ml-chunk">c1</span></span>
+    <span class="ml-chip"><span class="ml-rank">rank 3</span><span class="ml-chunk">c2</span></span>
+  </span>
+  <span class="ml-chip out"><span class="ml-rank">rank 4</span><span class="ml-chunk">c3</span></span>
+</div>
+<p class="ml-caption">precision@3 = <span class="frac"><span class="num">gold inside window: 1</span><span class="den">window width: 3</span></span> = 1/3 &rarr; <strong>0.33</strong>. Same scene, recall@3 = 1/1 — <em>all the gold that exists was found</em>. Perfect coverage, expensive delivery: two different verdicts, one denominator apart.</p>
+
+<h3>1/rank — the podium</h3>
+<div class="podium">
+  <div class="col"><span class="val">1.00</span><div class="bar" style="height:96px"></div><span class="lab">rank 1</span></div>
+  <div class="col gold"><span class="val">0.50</span><div class="bar" style="height:48px"></div><span class="lab">rank 2 ★</span></div>
+  <div class="col"><span class="val">0.33</span><div class="bar" style="height:32px"></div><span class="lab">rank 3</span></div>
+  <div class="col"><span class="val">0.25</span><div class="bar" style="height:24px"></div><span class="lab">rank 4</span></div>
+</div>
+<p class="ml-caption">The first gold at rank 1 owns the whole podium: 1/1 = <strong>1.00</strong>. At rank 2 it earns half — <span class="frac"><span class="num">1</span><span class="den">2</span></span> = <strong>0.50</strong>; at rank 4, a quarter. Presence says &ldquo;found eventually&rdquo;; reciprocal rank says &ldquo;found <em>early</em>&rdquo; — and early evidence writes better prompts. MRR is just the mean of these podium shares over the golden set.</p>
+
+<h3>Faithfulness — the claims bench</h3>
+<div class="ml-claim"><span class="ml-badge on">✓ in context</span><span class="ml-claim-text">chunk overlap preserves sentences cut at boundaries</span></div>
+<div class="ml-claim"><span class="ml-badge on">✓ in context</span><span class="ml-claim-text">windows in this corpus are 60 words wide</span></div>
+<div class="ml-claim"><span class="ml-badge off">✗ from nowhere</span><span class="ml-claim-text">the corpus is the entire Hitchhiker's Guide</span></div>
+<div class="ml-claim"><span class="ml-badge on">✓ in context</span><span class="ml-claim-text">retrieval scores are cosine similarities</span></div>
+<p class="ml-caption">faithfulness = <span class="frac"><span class="num">claims supported: 3</span><span class="den">claims total: 4</span></span> = 3/4 &rarr; <strong>0.75</strong>. The answer is decomposed into <em>claims</em> — atomic little propositions the judge lists — and the ratio runs over <strong>claims</strong>, never over chunks, citations, or documents. One claim in four traces to nothing you fed the model: your quiz-0006 question, drawn.</p>
+
+<h2><span class="secno">§3</span>By hand, on your own 0.875</h2>
+<p>These are <strong>your real numbers</strong> — the golden set from lesson 0006's verified run (2026-09-08). Four scored rows; the Vogon negative probe carries no retrieval score. Here is everything you need, and nothing you don't:</p>
+<table class="ref-table">
+  <tr><th>Golden row</th><th>Gold set (annotated by you)</th><th>Where the golds ranked</th></tr>
+  <tr><td>why must chunks overlap</td><td>1 chunk &mdash; <code>[2]</code></td><td>rank 1</td></tr>
+  <tr><td>three limitations of weights</td><td>2 chunks &mdash; <code>[0, 1]</code></td><td>ranks 1 and 2</td></tr>
+  <tr><td>what does chunking do</td><td>1 chunk &mdash; <code>[1]</code></td><td>rank 1</td></tr>
+  <tr><td>what does RAG give models</td><td>1 chunk &mdash; <code>[0]</code></td><td>rank 1</td></tr>
+</table>
+<p>Now <code>recall@1</code>, row by row, in pencil. The window is one chunk wide; each row's denominator is its own gold count:</p>
+<p style="text-align:center; font-size:1.05rem;">recall@1 = <span class="frac"><span class="num">1+<span style="color:var(--accent-deep)">0.5</span>+1+1</span><span class="den">4 rows</span></span> = 3.5/4 = <strong>0.875</strong></p>
+<p>The three single-gold rows each found their one gold at rank 1: 1/1. The straddled row — two golds, window of one — fetched half its evidence: <strong>0.5</strong>. The 0.875 was never a mystery: it is <em>&ldquo;one row could only fetch half its evidence at k=1&rdquo;</em>, averaged with three perfect rows. Half-of-one-row becomes an eighth off the whole. And note what the number <em>cannot</em> tell you until you decompose it: three rows are already perfect, so no chunker improvement on earth moves them — only the straddled row can, by making its evidence fit one window. That is why harness metrics are means of per-row fractions: the mean hides <em>which</em> row owes the debt.</p>
+<p><strong>Pencil, then check:</strong> with the same four rows, work out <code>recall@2</code>, <code>precision@2</code>, <code>precision@3</code> and <code>MRR</code>. Two hints: precision@3's four rows sum to 5/3, so the mean is 5/12 &asymp; 0.417; and MRR asks only where each row's <em>first</em> gold sat. Answers in the <a href="../reference/metrics-by-hand.html">metrics-by-hand cheat sheet</a> — and §5's machine re-checks the same arithmetic on a toy set.</p>
+
+<h2><span class="secno">§4</span>The machines</h2>
+<p>Two small interactive labs — course components now (<code>assets/metrics.js</code>), bound for the capstone's report page. They exist so you can <em>break things and watch which number moves</em>. The feedback is instant because the readout always names the numerator and the denominator, then the fraction, then the decimal.</p>
+
+<div class="rank-lab" data-ranking="0,1,2,3" data-gold="0,1" data-k="2"></div>
+<p>Three things to do with the ranking machine (do them in order):</p>
+<div class="task"><ol>
+  <li><strong>Slide k to 1.</strong> Read recall@1 = 1/2 — that single cell is why 0006's whole-harness recall@1 could not have been 1.0: one straddled row.</li>
+  <li><strong>Back at k=2, click <code>c2</code> to mark it gold.</strong> recall@2 falls to 2/3 while precision@2 stays 2/2. Watch <em>which denominator moved</em>: recall's grew (more gold exists now — <code>c2</code> sits outside the window); precision's never moves for gold it cannot see.</li>
+  <li><strong>Clear the golds, then make <code>c3</code> the only gold.</strong> Slide k: recall stays 0.000 until k=4, where it jumps to 1.000 — but precision@4 = 1/4 and 1/rank = 0.25. Deeply buried evidence: found, late, and expensive. This is the &ldquo;threshold is a bug&rdquo; doctrine from 0006, now in your hand.</li>
+</ol></div>
+
+<div class="faith-lab" data-claims='[["chunk overlap preserves sentences cut at boundaries",true],["windows in this corpus are 60 words wide",true],["the corpus is the entire Hitchhiker&#39;s Guide",false],["retrieval scores are cosine similarities",true]]'></div>
+<p>It opens on <strong>0.75</strong> — your number. Toggle the third claim's badge to ✓: 1.00. Toggle two: 0.50 — two leaks in four. The move to notice: <strong>badges only ever change the numerator.</strong> The denominator moves when the judge's <em>enumeration</em> changes — a claim appearing or disappearing — which is precisely why lesson 0006's discipline is &ldquo;the judge enumerates, the code divides.&rdquo; Five claims with one unsupported would read 4/5 = 0.80 — the number §5's lab prints.</p>
+
+<h2><span class="secno">§5</span>The lab — pencil first, then the machine</h2>
+
+<div class="task">
+<p class="task-title">Lab — verify.ts: the fraction reader</p>
+<p><strong>Step 0 — pencil.</strong> Here is a toy golden set: the same three questions you annotated in 0006, with invented rankings so every position is visible (the live numbers were 0006's; toys keep the arithmetic in your working memory):</p>
+<table class="ref-table">
+  <tr><th>Row</th><th>Ranking (best first)</th><th>Gold set</th></tr>
+  <tr><td>why must chunks overlap</td><td><code>c2 c0 c1 c3</code></td><td><code>[2]</code></td></tr>
+  <tr><td>three limitations of weights</td><td><code>c0 c1 c2 c3</code></td><td><code>[0, 1]</code></td></tr>
+  <tr><td>what does RAG give models</td><td><code>c1 c0 c2 c3</code></td><td><code>[0]</code></td></tr>
+</table>
+<p>On paper, draw a table — one row per golden row — and fill: <em>first-gold rank</em>, then recall@1/@2/@3 and precision@1/@2/@3 as fractions (1/2, not 0.5), then the three averages, MRR, and — for the verdict block — faithfulness at four claims supported of five. The <a href="../reference/metrics-by-hand.html">cheat sheet</a> holds the full answer key; the machine below confirms it.</p>
+<div class="code-block"><div class="code-title">shell — from the repository root</div><pre><code>mkdir -p labs/0007-read-the-metrics</code></pre></div>
+<p><strong>Step 1 — type the checker.</strong> Short by design — the formulas are one-liners because by now <em>you</em> are the formula:</p>
+<div class="code-block"><div class="code-title">labs/0007-read-the-metrics/verify.ts</div><pre><code><span class="tok-com">// Lesson 0007 — the fraction reader: your pencil table, machine-checked.</span>
+<span class="tok-com">// The rankings below are toys; the arithmetic is the real thing (eq. 16.22–16.26).</span>
+
+<span class="tok-kw">type</span> <span class="tok-typ">Row</span> = { q: <span class="tok-typ">string</span>; ranked: <span class="tok-typ">number</span>[]; gold: <span class="tok-typ">number</span>[] };
+
+<span class="tok-kw">const</span> ROWS: Row[] = [
+  { q: <span class="tok-str">"why must consecutive chunks share overlapping words"</span>, ranked: [2, 0, 1, 3], gold: [2] },
+  { q: <span class="tok-str">"what three limitations come from storing knowledge in weights"</span>, ranked: [0, 1, 2, 3], gold: [0, 1] },
+  { q: <span class="tok-str">"what does retrieval-augmented generation give to language models"</span>, ranked: [1, 0, 2, 3], gold: [0] },
+];
+
+<span class="tok-kw">const</span> VERDICT: <span class="tok-typ">Array</span>&lt;{ claim: <span class="tok-typ">string</span>; supported: <span class="tok-kw">boolean</span> }&gt; = [
+  { claim: <span class="tok-str">"overlap lets a sentence cut at a boundary survive whole in the next chunk"</span>, supported: <span class="tok-kw">true</span> },
+  { claim: <span class="tok-str">"the corpus is the full Hitchhiker's Guide"</span>, supported: <span class="tok-kw">false</span> },
+  { claim: <span class="tok-str">"windows in this corpus are 60 words wide with 12 of overlap"</span>, supported: <span class="tok-kw">true</span> },
+  { claim: <span class="tok-str">"retrieval scores are cosine similarities between query and chunk"</span>, supported: <span class="tok-kw">true</span> },
+  { claim: <span class="tok-str">"k was chosen by metrics, not by taste"</span>, supported: <span class="tok-kw">true</span> },
+];
+
+<span class="tok-kw">const</span> <span class="tok-fn">hits</span> = (row: Row, k: <span class="tok-typ">number</span>): <span class="tok-typ">number</span> =&gt;
+  row.gold.<span class="tok-fn">filter</span>((g) =&gt; row.ranked.<span class="tok-fn">slice</span>(0, k).<span class="tok-fn">includes</span>(g)).length;
+
+<span class="tok-kw">const</span> <span class="tok-fn">firstGoldRank</span> = (row: Row): <span class="tok-typ">number</span> =&gt;
+  row.ranked.<span class="tok-fn">findIndex</span>((c) =&gt; row.gold.<span class="tok-fn">includes</span>(c)) + 1;
+
+<span class="tok-kw">const</span> <span class="tok-fn">mean</span> = (f: (row: Row) =&gt; <span class="tok-typ">number</span>): <span class="tok-typ">number</span> =&gt;
+  ROWS.<span class="tok-fn">reduce</span>((sum, row) =&gt; sum + <span class="tok-fn">f</span>(row), 0) / ROWS.length;
+
+console.<span class="tok-fn">log</span>(<span class="tok-str">"row by row (the pencil table, machine-checked):"</span>);
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> row <span class="tok-kw">of</span> ROWS) {
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`  "${row.q}"`</span>);
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`    first gold at rank ${firstGoldRank(row)} -&gt; 1/rank = ${(1 / firstGoldRank(row)).toFixed(3)}`</span>);
+  <span class="tok-kw">for</span> (<span class="tok-kw">const</span> k <span class="tok-kw">of</span> [1, 2, 3]) {
+    console.<span class="tok-fn">log</span>(<span class="tok-str">`    k=${k}: recall = ${hits(row, k)}/${row.gold.length}   precision = ${hits(row, k)}/${k}`</span>);
+  }
+}
+
+console.<span class="tok-fn">log</span>(<span class="tok-str">"\nharness numbers (mean over the 3 rows):"</span>);
+<span class="tok-kw">for</span> (<span class="tok-kw">const</span> k <span class="tok-kw">of</span> [1, 2, 3]) {
+  console.<span class="tok-fn">log</span>(
+    <span class="tok-str">`  recall@${k} = ${mean((r) =&gt; hits(r, k) / r.gold.length).toFixed(3)}    precision@${k} = ${mean((r) =&gt; hits(r, k) / k).toFixed(3)}`</span>,
+  );
+}
+console.<span class="tok-fn">log</span>(<span class="tok-str">`  MRR = ${mean((r) =&gt; 1 / firstGoldRank(r)).toFixed(3)}`</span>);
+
+<span class="tok-kw">const</span> supported = VERDICT.<span class="tok-fn">filter</span>((c) =&gt; c.supported).length;
+console.<span class="tok-fn">log</span>(<span class="tok-str">`\nfaithfulness = ${supported}/${VERDICT.length} = ${(supported / VERDICT.length).toFixed(3)} (eq. 16.26)`</span>);
+</code></pre></div>
+<div class="code-block"><div class="code-title">shell — run it (pure arithmetic; no API, no .env needed)</div><pre><code>pnpm typecheck
+pnpm exec tsx labs/0007-read-the-metrics/verify.ts</code></pre></div>
+<p><strong>Expected</strong> (verified live 2026-09-11): the three rows print their 1/rank shares (1.000, 1.000, 0.500 — row three's only gold sits at rank 2: <em>a hit, but a late one</em>), then <code>recall@1 = 0.500 · recall@2 = 1.000 · precision@2 = 0.667 · precision@3 = 0.444 · MRR = 0.833</code>, then <code>faithfulness = 4/5 = 0.800</code>. Compare <em>cell by cell</em> against your pencil table — every mismatch is a denominator you named wrong, which is exactly the thing this lesson exists to fix. And read the verdict in the numbers once more: recall is satisfied at k=2, precision falls from k=2 to k=3, MRR holds — <strong>ship k=2</strong>, your 0006 conclusion, now re-derived by your own pencil on toys.</p>
+</div>
+
+<h2><span class="secno">§6</span>Check yourself</h2>
+<p>One question below returns verbatim from lesson 0006's quiz — the one that got away. Answer it from memory; you have new eyes now.</p>
+<div class="quiz" data-quiz="lesson0007"></div>
+<script type="application/json" id="lesson0007">
+[
+  {
+    "q": "One gold chunk exists, and the top-2 holds it. recall@2 equals…",
+    "options": ["1.00", "0.50", "0.25", "2.00"],
+    "answer": 0,
+    "explain": "Recall's denominator is the gold that EXISTS — one chunk, found: 1/1. The 0.50 on offer is precision@2's answer for the same scene (same numerator, denominator = window width 2) — the mirrored pair. 2.00 is impossible: a share of existing gold can never exceed 1."
+  },
+  {
+    "q": "The top-3 holds exactly one gold chunk. precision@3 equals…",
+    "options": ["0.33", "0.50", "1.00", "3.00"],
+    "answer": 0,
+    "explain": "Precision's denominator is the window WIDTH — three chunks were fed, one was gold: 1/3. The 1.00 is recall@3's answer for the same scene (all existing gold was found). Two metrics, one scene, two denominators: that gap IS the lesson. Every non-gold slot in the window is dilution you paid for in tokens."
+  },
+  {
+    "q": "Four golden rows recall 1.0, 1.0, 1.0, 0.5 at k=1. The harness prints recall@1 =",
+    "options": ["0.875", "0.500", "0.750", "1.000"],
+    "answer": 0,
+    "explain": "Harness metrics are MEANS of per-row fractions: (1 + 1 + 1 + 0.5)/4 = 3.5/4 = 0.875 — your own lesson-0006 number, now hand-derived. One multi-gold row that could only fetch half its evidence at k=1, averaged with three perfect rows. 0.500 is the odd row alone (you forgot to average); 0.750 miscounts the rows."
+  },
+  {
+    "q": "A faithfulness score of 0.75 on an answer means…",
+    "options": [
+      "one claim in four lacks context support",
+      "three of four retrieved chunks got cited",
+      "a quarter of the citations were fabricated",
+      "the answer used three of four documents"
+    ],
+    "answer": 0,
+    "explain": "Eq. 16.26 is a ratio over CLAIMS: supported-by-context over total. 0.75 means one of every four claims traces to nothing you fed the model — a weights leak or an invention, the exact thing the judge exists to catch. Citation counts and document usage are different axes entirely."
+  },
+  {
+    "q": "Recall's denominator is…",
+    "options": ["gold chunks existing", "chunks you retrieved", "claims in answer", "queries in set"],
+    "answer": 0,
+    "explain": "Recall measures coverage of the gold that EXISTS (eq. 16.22). Precision divides by chunks retrieved; faithfulness divides by claims the judge enumerated; the query count is the OUTER average — not a denominator inside any row. Name the denominator first, always: every misreading of a metric score is a denominator swap."
+  }
+]
+</script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/metrics.js"></script>
+
+<h2><span class="secno">§7</span>Primary sources, in order</h2>
+<ul>
+  <li><strong>First, from your book</strong> (Roitman 2026, <a href="https://arxiv.org/abs/2606.24937">arXiv:2606.24937</a>): ch. 16 §16.8.1–16.8.2, a second pass. Read eq. 16.22–16.26 now as <em>recognition</em>: each is one line of your pencil table wearing notation. The fractions were always fractions.</li>
+  <li><strong>Web primary (new):</strong> <a href="https://nlp.stanford.edu/IR-book/html/htmledition/evaluation-in-information-retrieval-1.html">Manning, Raghavan &amp; Schütze, <em>Introduction to Information Retrieval</em>, ch. 8 — Evaluation in information retrieval</a> (Cambridge UP 2008; complete and free online). The home discipline of recall and precision — ranked-retrieval evaluation, averaging conventions, and where MRR sits among rank-based measures. The book compresses three pages of this into three equations; here is the full chapter, at exactly your current level. Verified live 2026-09-11.</li>
+  <li><strong>Re-read as recognition:</strong> <a href="https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/faithfulness/">RAGAs — faithfulness</a>. Production dress for eq. 16.26: statements are extracted from the answer, verdicted against the context, and the ratio runs over statements. You can now predict every line of their page.</li>
+  <li><strong>Keep open:</strong> the <a href="../reference/metrics-by-hand.html">metrics-by-hand cheat sheet</a> (this lesson compressed: the fraction table, the four pictures, and both answer keys) and the <a href="../reference/eval-harness.html">evaluation cheat sheet</a> (the harness plumbing). Full list: <code>RESOURCES.md</code>.</li>
+</ul>
+
+<div class="callout note">
+  <p class="callout-title">Your teacher is on call</p>
+  <p>If one specific fraction in §3 or §5 resisted, name the <strong>row</strong> — that pinpoints the missing link (multi-gold recall? the mean-of-fractions? the 5/12?). Fair game too: NDCG, the fourth retrieval metric the book lists (eq. 16.25) that we deliberately skipped; why MRR prefers 1/rank over the raw rank; what &ldquo;reference-free&rdquo; judging costs in trust — <strong>ask in the chat</strong>.</p>
+</div>
+
+<h2><span class="secno">§8</span>Where this goes</h2>
+<p><strong>Lesson 0008 — the capstone, one lesson later than commissioned.</strong> The detour was the point: the capstone's superpower is that every change — chunk size, overlap, model, k — defends itself with these tables, and unread tables defend nothing. Now the corpus becomes the Hitchhiker's Guide itself: 636 pages through your chunker, the vector-store graduation decision, a golden set grown from real questions, and the harness re-run on every change. These two machines ride along: the ranking machine and the claims bench are the capstone's report page, already written.</p>
+
+<div class="lesson-footer">
+  <p>Lesson 0007 of the <em>Agents &amp; RAG in TypeScript</em> course · <a href="../reference/metrics-by-hand.html">Metrics-by-hand cheat sheet</a> · <a href="https://nlp.stanford.edu/IR-book/html/htmledition/evaluation-in-information-retrieval-1.html">Primary source</a> · Book ch. 16 §16.8 · Next: <em>the capstone, scaled</em></p>
+  <div class="lesson-nav">
+    <a class="pill" href="0006-evaluate-the-loop.html">prev: 0006 · evaluate the loop</a>
+    <span class="pill">next: 0008 · the capstone, scaled</span>
+  </div>
+</div>
+
+</body>
+</html>
