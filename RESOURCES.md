@@ -26,6 +26,8 @@ Prune ruthlessly as the course progresses; a resource that goes stale comes off 
   The single biggest mental shift from Python; the pattern behind all agent message handling. Lesson 0001's primary source.
 - [Handbook: Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html)
   `Partial`, `Pick`, `Record` — appear in every TS agent-framework API.
+- [Handbook: Modules reference](https://www.typescriptlang.org/docs/handbook/modules/reference.html)
+  How TS resolves imports. Home of the nodenext rule that a relative import of `retrieval.ts` is written `"./retrieval.js"` — it names the emitted file. Verified live 2026-09-08. Bit us politely in lesson 0006.
 - [MDN JavaScript Guide](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide)
   The JS layer under TS. ⚠️ Stable URL, not re-fetched. Use for: JS-only gaps (var/hoisting, `this`, prototypes) when they surface.
 - [TypeScript / Python Rosetta Stone (Javier Candeira, gist)](https://gist.github.com/candeira/7d7a2e8a581607eaa9a591f138593631)
@@ -82,6 +84,8 @@ Reading order for this course: Anthropic posts → Vercel AI SDK → Claude Agen
   Framework-level RAG pipeline walk; concepts transfer to TS. (Their TS port is secondary.)
 - [Transformers.js docs](https://huggingface.co/docs/transformers.js/en/index)
   `@huggingface/transformers` — run embedding (and other) models locally in Node/TS. Verified live 2026-09-07 (v4.2.0, 200 OK). Lesson 0004's embedding engine; the capstone's retrieval layer. Requires `skipLibCheck` (shipped d.ts doesn't pass nodenext). Companion: our [chunking cheat sheet](reference/chunking-embeddings.html).
+- [RAGAs — evaluation framework docs](https://docs.ragas.io/en/latest/) · [faithfulness metric](https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/faithfulness/)
+  Reference-free RAG evaluation with LLM judges: faithfulness, answer relevance, context precision/recall. The book §16.8.3's framework (paper: [arXiv:2309.15217](https://arxiv.org/abs/2309.15217)); lesson 0006 hand-rolls its core. Currency: v0.2+ renamed dataset columns to `user_input/response/retrieved_contexts/reference`. Verified live 2026-09-08. Our [evaluation cheat sheet](reference/eval-harness.html) compresses the hand-rolled version.
 - **Currency note (2026-09-07, live):** Z.AI's global API (`api.z.ai`) serves **no embeddings** — `GET /api/paas/v4/models` lists chat models only; `/embeddings` returns error 1211 for `embedding-2`/`embedding-3`. The China endpoint (`open.bigmodel.cn`) rejects the same key. Do not design lesson material around GLM embeddings; local transformers.js or Voyage/OpenAI are the real options.
 
 ## Wisdom (Communities)

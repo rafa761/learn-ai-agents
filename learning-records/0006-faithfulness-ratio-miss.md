@@ -1,0 +1,11 @@
+# Missed Q2 (lesson 0006 quiz): faithfulness is a ratio over CLAIMS — not over chunks, citations, or documents — not yet retrievable
+
+Lesson-0006 quiz (2026-09-11): 4/5 first-attempt. The single miss was the faithfulness-ratio question — he did not retrieve that 0.75 means *one claim in four lacks context support* (eq. 16.26's numerator and denominator are claim counts, nothing else).
+
+**Evidence:** self-reported first-attempt result; per-question map in his browser under `learn-ai-agents:lesson0006`.
+
+**The distinction to install:** the faithfulness ratio runs over atomic **claims** — the judge enumerates them, the code divides supported-by-context by total ("judge enumerates / code divides," lesson 0006's own doctrine). All three distractors re-attach the ratio to retrieval artifacts: chunks cited, citations fabricated, documents used. The pull is toward reading every RAG ratio as a statement about *documents* — the visible pipeline artifacts — instead of about the judge's decomposition of the answer. Notable: he *ran* this metric live (5 claims, 5 supported, 1.00) and answered the MRR question correctly in the same quiz — a rank-ratio over queries stuck while a claim-ratio over answers didn't. Fluent procedure, unstable concept: the computation executed, the denominator identity didn't land. Which distractor he chose is unknown (the report lists only the correct answer); "a quarter of the citations were fabricated" is the nearest miss — it preserves the lacks-support semantics but relocates them onto citations.
+
+**Implications:** lesson 0007 (the capstone) re-runs this exact harness against the book itself and grows the golden set — the second handle is built in. When the capstone judge first runs, have him *read the judge's claims array* before the score prints: seeing `"claims": [...]` as a list of atomic propositions is the fix for denominator identity. Q2 must be interleaved — re-asked verbatim — in lesson 0007's quiz.
+
+**Standing schedule after this session:** Q2 (this LR) returns lesson 0007 · Q5 (LR-0004) next ≈ lesson 0008 · Q1 (LR-0005) correct at first return → next ≈ lesson 0009 (first expanded-interval return) · Q4 (LR-0002) next ≈ lesson 0010 (retire on correct) · Q3 (LR-0003) correct at second consecutive return → next ≈ lesson 0011 (retire on correct).
